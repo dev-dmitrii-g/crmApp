@@ -6,16 +6,30 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"unicode"
 
 	"crmProject/internal/db"
 
 	_ "github.com/mattn/go-sqlite3"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/store/sqlstore"
+	watypes "go.mau.fi/whatsmeow/types"
 	waEvents "go.mau.fi/whatsmeow/types/events"
 	waLog "go.mau.fi/whatsmeow/util/log"
 )
+
+// normalizePhone strips everything that is not a digit.
+// WhatsApp Sender.User is already digits-only; this handles manually-entered phones with +, spaces, dashes.
+func normalizePhone(p string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsDigit(r) {
+			return r
+		}
+		return -1
+	}, p)
+}
 
 type Manager struct {
 	container     *sqlstore.Container
@@ -125,14 +139,52 @@ func (m *Manager) setupEventHandler(client *whatsmeow.Client, userID uint) {
 				}
 			}
 
+			if vid := v.Message.GetVideoMessage(); vid != nil {
+				data, err := client.Download(context.Background(), vid)
+				if err == nil {
+					fileName := fmt.Sprintf("%d_%s.mp4", v.Info.Timestamp.Unix(), v.Info.ID)
+					filePath := filepath.Join("uploads", fileName)
+					if err := os.WriteFile(filePath, data, 0644); err == nil {
+						fileURL = "http://localhost:8080/uploads/" + fileName
+						caption := vid.GetCaption()
+						if caption != "" {
+							text = fmt.Sprintf("🎥 Видео: %s [%s]", fileURL, caption)
+						} else {
+							text = "🎥 Видео: " + fileURL
+						}
+					}
+				}
+			}
+
+			if sticker := v.Message.GetStickerMessage(); sticker != nil {
+				data, err := client.Download(context.Background(), sticker)
+				if err == nil {
+					fileName := fmt.Sprintf("%d_%s.webp", v.Info.Timestamp.Unix(), v.Info.ID)
+					filePath := filepath.Join("uploads", fileName)
+					if err := os.WriteFile(filePath, data, 0644); err == nil {
+						fileURL = "http://localhost:8080/uploads/" + fileName
+						text = "🖼️ Стикер: " + fileURL
+					}
+				}
+			}
+
 			if text == "" {
 				return
 			}
 
-			phone := v.Info.Sender.User
-			if phone == "" {
-				phone = v.Info.Sender.ToNonAD().User
+			// Detect LID contacts (new WhatsApp privacy system, server = "lid.us").
+			// Store them with "lid_" prefix so SendMessage can route via HiddenUserServer.
+			var phone string
+			if v.Info.Sender.Server == watypes.HiddenUserServer {
+				phone = "lid_" + v.Info.Sender.User
+			} else {
+				phone = v.Info.Sender.User
+				if phone == "" {
+					phone = v.Info.Sender.ToNonAD().User
+				}
+				phone = normalizePhone(phone)
 			}
+			log.Printf("[WA-INCOMING] sender JID=%s server=%s → stored phone=%q", v.Info.Sender.String(), v.Info.Sender.Server, phone)
 
 			senderName := v.Info.PushName
 			if senderName == "" {
@@ -141,8 +193,20 @@ func (m *Manager) setupEventHandler(client *whatsmeow.Client, userID uint) {
 
 			log.Printf("[WA-INCOMING] Сообщение от %s (%s): %s", senderName, phone, text)
 
+			// Match regardless of whether phone was stored with +, without, or as lid_
 			var clientID int
-			err := db.DB.QueryRow("SELECT id FROM clients WHERE phone = ?", phone).Scan(&clientID)
+			var altPhone string
+			if strings.HasPrefix(phone, "lid_") {
+				// LID: only exact match (no normalization variants)
+				altPhone = phone
+			} else {
+				// Regular phone: also try with "+" prefix (manually-entered phones)
+				altPhone = "+" + phone
+			}
+			err := db.DB.QueryRow(
+				"SELECT id FROM clients WHERE phone = ? OR phone = ?",
+				phone, altPhone,
+			).Scan(&clientID)
 			if err != nil {
 				res, err := db.DB.Exec("INSERT INTO clients (phone, name, status, manager_id) VALUES (?, ?, 'new', ?)",
 					phone, senderName, userID)

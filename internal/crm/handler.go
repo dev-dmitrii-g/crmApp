@@ -7,11 +7,21 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"crmProject/internal/db"
 
 	"github.com/gin-gonic/gin"
 )
+
+func normalizePhone(p string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsDigit(r) {
+			return r
+		}
+		return -1
+	}, p)
+}
 
 type Client struct {
 	ID           int               `json:"id"`
@@ -79,15 +89,16 @@ func CreateClient(c *gin.Context) {
 	userIDRaw, _ := c.Get("user_id")
 	userID := int(userIDRaw.(uint))
 
+	phone := normalizePhone(input.Phone)
 	res, err := db.DB.Exec("INSERT INTO clients (phone, name, status, manager_id) VALUES (?, ?, 'new', ?)",
-		input.Phone, input.Name, userID)
+		phone, input.Name, userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create client"})
 		return
 	}
 
 	id, _ := res.LastInsertId()
-	c.JSON(http.StatusCreated, gin.H{"id": id, "phone": input.Phone, "name": input.Name, "status": "new", "manager_id": userID})
+	c.JSON(http.StatusCreated, gin.H{"id": id, "phone": phone, "name": input.Name, "status": "new", "manager_id": userID})
 }
 
 func UpdateClientStatus(c *gin.Context) {

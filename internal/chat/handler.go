@@ -5,7 +5,9 @@ import (
 	"crmProject/internal/auth"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
+	"unicode"
 
 	"crmProject/internal/db"
 	"crmProject/internal/whatsapp"
@@ -148,12 +150,16 @@ func SendMessage(c *gin.Context) {
 	var jid types.JID
 	if len(phone) > 4 && phone[:4] == "lid_" {
 		jid = types.NewJID(phone[4:], types.HiddenUserServer)
-	} else if len(phone) >= 14 {
-
-		jid = types.NewJID(phone, types.HiddenUserServer)
 	} else {
-
-		jid = types.NewJID(phone, types.DefaultUserServer)
+		// Strip everything that is not a digit — WhatsApp JIDs never contain +, spaces or dashes
+		cleaned := strings.Map(func(r rune) rune {
+			if unicode.IsDigit(r) {
+				return r
+			}
+			return -1
+		}, phone)
+		log.Printf("[SEND] phone=%q cleaned=%q", phone, cleaned)
+		jid = types.NewJID(cleaned, types.DefaultUserServer)
 	}
 
 	waMsg := &waE2E.Message{
@@ -174,6 +180,7 @@ func SendMessage(c *gin.Context) {
 	msgID, _ := res.LastInsertId()
 
 	msgPayload := gin.H{
+		"type":        "new_message",
 		"id":          msgID,
 		"client_id":   input.ClientID,
 		"text":        input.Text,
