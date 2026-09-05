@@ -37,15 +37,19 @@ func Register(c *gin.Context) {
 	res, err := db.DB.Exec("INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)",
 		input.Name, input.Email, hashedPassword)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "User with this email already exists"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "User already exists or DB error"})
 		return
 	}
 
 	userID, _ := res.LastInsertId()
 
-	_, _ = db.DB.Exec("INSERT INTO wa_sessions (user_id) VALUES (?)", userID)
+	_, _ = db.DB.Exec("INSERT OR IGNORE INTO wa_sessions (user_id) VALUES (?)", userID)
 
-	token, _ := GenerateToken(uint(userID), input.Email)
+	token, err := GenerateToken(uint(userID), input.Email)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
+		return
+	}
 
 	c.JSON(http.StatusCreated, gin.H{
 		"token": token,

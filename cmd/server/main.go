@@ -30,42 +30,40 @@ func main() {
 
 	r.Use(func(c *gin.Context) {
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE, PATCH")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
+		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, PATCH, DELETE")
+
 		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(204)
+			c.AbortWithStatus(200)
 			return
 		}
+
 		c.Next()
 	})
 
-	api := r.Group("/api")
-	{
-		api.POST("/auth/register", auth.Register)
-		api.POST("/auth/login", auth.Login)
-	}
+	r.POST("/api/auth/register", auth.Register)
+	r.POST("/api/auth/login", auth.Login)
+	r.GET("/api/ws/whatsapp/qr", whatsapp.HandleQRWebSocket)
+	r.GET("/api/ws/chat", chat.HandleChatWS)
 
-	protected := api.Group("/")
-	protected.Use(auth.AuthMiddleware())
+	api := r.Group("/api")
+	api.Use(auth.AuthMiddleware())
 	{
-		protected.GET("/auth/me", func(c *gin.Context) {
+		api.GET("/auth/me", func(c *gin.Context) {
 			userID, _ := c.Get("user_id")
 			email, _ := c.Get("email")
 			c.JSON(http.StatusOK, gin.H{"user_id": userID, "email": email})
 		})
 
-		// CRM эндпоинты
-		protected.GET("/clients", crm.GetClients)
-		protected.POST("/clients", crm.CreateClient)
-		protected.PATCH("/clients/:id/status", crm.UpdateClientStatus)
+		// CRM
+		api.GET("/clients", crm.GetClients)
+		api.POST("/clients", crm.CreateClient)
+		api.PATCH("/clients/:id/status", crm.UpdateClientStatus)
 
-		// Чат эндпоинты
-		protected.GET("/messages", chat.GetMessages)
-		protected.POST("/messages/send", chat.SendMessage)
-
-		// WebSockets
-		protected.GET("/ws/whatsapp/qr", whatsapp.HandleQRWebSocket)
-		protected.GET("/ws/chat", chat.HandleChatWS)
+		// Chat
+		api.GET("/messages", chat.GetMessages)
+		api.POST("/messages/send", chat.SendMessage)
 	}
 
 	log.Println("Server starts on http://localhost:8080")

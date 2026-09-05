@@ -2,6 +2,7 @@ package whatsapp
 
 import (
 	"context"
+	"crmProject/internal/auth"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -13,12 +14,19 @@ var upgrader = websocket.Upgrader{
 }
 
 func HandleQRWebSocket(c *gin.Context) {
-	userIDRaw, exists := c.Get("user_id")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+	tokenStr := c.Query("token")
+	if tokenStr == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Token query param required"})
 		return
 	}
-	userID := userIDRaw.(uint)
+
+	claims, err := auth.ValidateToken(tokenStr)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
+		return
+	}
+
+	userID := claims.UserID
 
 	ws, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
@@ -29,36 +37,36 @@ func HandleQRWebSocket(c *gin.Context) {
 	ctx := context.Background()
 	client, err := WAManager.GetClient(ctx, userID)
 	if err != nil {
-		ws.WriteJSON(gin.H{"type": "error", "message": "Failed to get WA client"})
+		_ = ws.WriteJSON(gin.H{"type": "error", "message": "Failed to get WA client"})
 		return
 	}
 
 	if client.IsConnected() && client.IsLoggedIn() {
-		ws.WriteJSON(gin.H{"type": "status", "status": "connected"})
+		_ = ws.WriteJSON(gin.H{"type": "status", "status": "connected"})
 		return
 	}
 
 	qrChan, err := client.GetQRChannel(ctx)
 	if err != nil {
 		if client.IsConnected() {
-			ws.WriteJSON(gin.H{"type": "status", "status": "connected"})
+			_ = ws.WriteJSON(gin.H{"type": "status", "status": "connected"})
 		} else {
-			ws.WriteJSON(gin.H{"type": "error", "message": "Failed to get QR channel"})
+			_ = ws.WriteJSON(gin.H{"type": "error", "message": "Failed to get QR channel"})
 		}
 		return
 	}
 
 	err = client.Connect()
 	if err != nil {
-		ws.WriteJSON(gin.H{"type": "error", "message": "Failed to connect to WhatsApp"})
+		_ = ws.WriteJSON(gin.H{"type": "error", "message": "Failed to connect to WhatsApp"})
 		return
 	}
 
 	for evt := range qrChan {
 		if evt.Event == "code" {
-			ws.WriteJSON(gin.H{"type": "qr", "code": evt.Code})
+			_ = ws.WriteJSON(gin.H{"type": "qr", "code": evt.Code})
 		} else if evt.Event == "success" {
-			ws.WriteJSON(gin.H{"type": "status", "status": "connected"})
+			_ = ws.WriteJSON(gin.H{"type": "status", "status": "connected"})
 			break
 		}
 	}
