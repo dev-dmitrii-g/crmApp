@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crmProject/internal/crm"
 	"log"
 	"net/http"
 
@@ -51,6 +52,10 @@ func main() {
 			email, _ := c.Get("email")
 			c.JSON(http.StatusOK, gin.H{"user_id": userID, "email": email})
 		})
+
+		protected.GET("/clients", crm.GetClients)
+		protected.POST("/clients", crm.CreateClient)
+		protected.PATCH("/clients/:id/status", crm.UpdateClientStatus)
 
 		protected.GET("/ws/whatsapp/qr", whatsapp.HandleQRWebSocket)
 	}
