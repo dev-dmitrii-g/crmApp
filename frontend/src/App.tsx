@@ -28,11 +28,63 @@ export default function App() {
   const [qrCode, setQrCode] = useState<string>('');
   const [showQR, setShowQR] = useState<boolean>(false);
 
+  // Состояния для добавления нового клиента
+  const [showAddClient, setShowAddClient] = useState<boolean>(false);
+  const [newClientName, setNewClientName] = useState<string>('');
+  const [newClientPhone, setNewClientPhone] = useState<string>('');
+
+  // WebSocket для живых обновлений чата и доски
+  useEffect(() => {
+    if (!token) return;
+
+    const chatWs = new WebSocket(`ws://localhost:8080/api/ws/chat?token=${token}`);
+
+    chatWs.onmessage = () => {
+      void fetchClients();
+      if (selectedClient) {
+        void openChat(selectedClient);
+      }
+    };
+
+    // Keep-alive ping
+    const pingInterval = setInterval(() => {
+      if (chatWs.readyState === WebSocket.OPEN) {
+        chatWs.send(JSON.stringify({ type: 'ping' }));
+      }
+    }, 30000);
+
+    return () => {
+      clearInterval(pingInterval);
+      if (chatWs.readyState === WebSocket.OPEN || chatWs.readyState === WebSocket.CONNECTING) {
+        chatWs.close();
+      }
+    };
+  }, [token, selectedClient]);
+
   useEffect(() => {
     if (token) {
       void fetchClients();
     }
   }, [token]);
+
+  const handleAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const res = await axios.post(`${API}/auth/login`, { email, password });
+      const newToken = res.data.token;
+      localStorage.setItem('token', newToken);
+      setToken(newToken);
+    } catch {
+      try {
+        const regRes = await axios.post(`${API}/auth/register`, { name: 'Manager', email, password });
+        const newToken = regRes.data.token;
+        localStorage.setItem('token', newToken);
+        setToken(newToken);
+      } catch (err) {
+        alert('Ошибка авторизации');
+      }
+    }
+  };
 
   const fetchClients = async () => {
     try {
@@ -45,20 +97,22 @@ export default function App() {
     }
   };
 
-  const handleLogin = async (e: React.SubmitEvent) => {
+  const handleCreateClient = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!newClientName || !newClientPhone) return;
+
     try {
-      const res = await axios.post(`${API}/auth/login`, { email, password });
-      setToken(res.data.token);
-      localStorage.setItem('token', res.data.token);
-    } catch {
-      try {
-        const res = await axios.post(`${API}/auth/register`, { name: 'Manager', email, password });
-        setToken(res.data.token);
-        localStorage.setItem('token', res.data.token);
-      } catch (err) {
-        alert(' Ошибка авторизации');
-      }
+      await axios.post(`${API}/clients`,
+          { name: newClientName, phone: newClientPhone },
+          { headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      setNewClientName('');
+      setNewClientPhone('');
+      setShowAddClient(false);
+      await fetchClients();
+    } catch (err) {
+      alert('Ошибка при создании клиента');
     }
   };
 
@@ -112,10 +166,27 @@ export default function App() {
     }
   };
 
+  // Парсинг ссылок и медиа в сообщениях
+  const renderMessageText = (text: string) => {
+    if (text.includes('📷 Картинка: http') || text.includes('📷 [Картинка: http')) {
+      const url = text.match(/http:\/\/localhost:8080\/uploads\/[^\s\]]+/)?.[0];
+      return url ? <img src={url} alt="WA Media" style={{ maxWidth: 220, borderRadius: 6, display: 'block', margin: '4px 0' }} /> : text;
+    }
+    if (text.includes('🎤 Голосовое сообщение: http')) {
+      const url = text.split('🎤 Голосовое сообщение: ')[1];
+      return <audio controls src={url} style={{ maxWidth: 220, margin: '4px 0' }} />;
+    }
+    if (text.includes('📄 Документ: http')) {
+      const url = text.split('📄 Документ: ')[1];
+      return <a href={url} target="_blank" rel="noreferrer" style={{ color: '#2563eb', textDecoration: 'underline' }}>Скачать документ</a>;
+    }
+    return text;
+  };
+
   if (!token) {
     return (
         <div style={{ display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center' }}>
-          <form onSubmit={(e) => { void handleLogin(e); }} style={{ background: '#fff', padding: 24, borderRadius: 8, boxShadow: '0 2px 10px rgba(0,0,0,0.1)' }}>
+          <form onSubmit={(e) => { void handleAuth(e); }} style={{ background: '#fff', padding: 24, borderRadius: 8, boxShadow: '0 2px 10px rgba(0,0,0,0.1)' }}>
             <h2>Вход в CRM</h2>
             <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="Email" style={{ display: 'block', margin: '10px 0', padding: 8, width: '100%' }} />
             <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Пароль" style={{ display: 'block', margin: '10px 0', padding: 8, width: '100%' }} />
@@ -129,9 +200,14 @@ export default function App() {
       <div style={{ padding: 20 }}>
         <header style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 20 }}>
           <h2>WhatsApp CRM Канбан</h2>
-          <button onClick={connectWhatsApp} style={{ background: '#25D366', color: '#fff', border: 'none', padding: '10px 15px', borderRadius: 6, cursor: 'pointer' }}>
-            Привязать WhatsApp
-          </button>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button onClick={() => setShowAddClient(true)} style={{ background: '#3b82f6', color: '#fff', border: 'none', padding: '10px 15px', borderRadius: 6, cursor: 'pointer' }}>
+              + Новый клиент
+            </button>
+            <button onClick={connectWhatsApp} style={{ background: '#25D366', color: '#fff', border: 'none', padding: '10px 15px', borderRadius: 6, cursor: 'pointer' }}>
+              Привязать WhatsApp
+            </button>
+          </div>
         </header>
 
         {/* Канбан Доска */}
@@ -164,7 +240,9 @@ export default function App() {
               <div style={{ height: 250, overflowY: 'auto', margin: '10px 0' }}>
                 {messages.map((m, i) => (
                     <div key={i} style={{ textAlign: m.is_outgoing ? 'right' : 'left', margin: '5px 0' }}>
-                      <span style={{ background: m.is_outgoing ? '#dcf8c6' : '#f0f0f0', padding: '6px 10px', borderRadius: 6, display: 'inline-block' }}>{m.text}</span>
+                <span style={{ background: m.is_outgoing ? '#dcf8c6' : '#f0f0f0', padding: '6px 10px', borderRadius: 6, display: 'inline-block' }}>
+                  {renderMessageText(m.text)}
+                </span>
                     </div>
                 ))}
               </div>
@@ -175,7 +253,34 @@ export default function App() {
             </div>
         )}
 
-        {/* Модалка QR Кода */}
+        {showAddClient && (
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+              <form onSubmit={(e) => { void handleCreateClient(e); }} style={{ background: '#fff', padding: 24, borderRadius: 8, width: 320 }}>
+                <h3 style={{ marginTop: 0 }}>Добавить клиента</h3>
+                <input
+                    type="text"
+                    placeholder="Имя / Название"
+                    value={newClientName}
+                    onChange={e => setNewClientName(e.target.value)}
+                    style={{ display: 'block', margin: '10px 0', padding: 8, width: '100%', boxSizing: 'border-box' }}
+                    required
+                />
+                <input
+                    type="text"
+                    placeholder="Номер телефона (например, 79991112233)"
+                    value={newClientPhone}
+                    onChange={e => setNewClientPhone(e.target.value)}
+                    style={{ display: 'block', margin: '10px 0', padding: 8, width: '100%', boxSizing: 'border-box' }}
+                    required
+                />
+                <div style={{ display: 'flex', gap: 10, marginTop: 15 }}>
+                  <button type="submit" style={{ flex: 1, padding: 8, background: '#3b82f6', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }}>Сохранить</button>
+                  <button type="button" onClick={() => setShowAddClient(false)} style={{ flex: 1, padding: 8, background: '#ef4444', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }}>Отмена</button>
+                </div>
+              </form>
+            </div>
+        )}
+
         {showQR && (
             <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <div style={{ background: '#fff', padding: 24, borderRadius: 8, textAlign: 'center' }}>

@@ -2,8 +2,9 @@ package whatsapp
 
 import (
 	"context"
-	"crmProject/internal/auth"
 	"net/http"
+
+	"crmProject/internal/auth"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -16,7 +17,7 @@ var upgrader = websocket.Upgrader{
 func HandleQRWebSocket(c *gin.Context) {
 	tokenStr := c.Query("token")
 	if tokenStr == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Token query param required"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Token required"})
 		return
 	}
 
@@ -35,6 +36,7 @@ func HandleQRWebSocket(c *gin.Context) {
 	defer ws.Close()
 
 	ctx := context.Background()
+
 	client, err := WAManager.GetClient(ctx, userID)
 	if err != nil {
 		_ = ws.WriteJSON(gin.H{"type": "error", "message": "Failed to get WA client"})
@@ -48,18 +50,16 @@ func HandleQRWebSocket(c *gin.Context) {
 
 	qrChan, err := client.GetQRChannel(ctx)
 	if err != nil {
-		if client.IsConnected() {
-			_ = ws.WriteJSON(gin.H{"type": "status", "status": "connected"})
-		} else {
-			_ = ws.WriteJSON(gin.H{"type": "error", "message": "Failed to get QR channel"})
-		}
+		_ = ws.WriteJSON(gin.H{"type": "error", "message": "Failed to get QR channel"})
 		return
 	}
 
-	err = client.Connect()
-	if err != nil {
-		_ = ws.WriteJSON(gin.H{"type": "error", "message": "Failed to connect to WhatsApp"})
-		return
+	if !client.IsConnected() {
+		err = client.Connect()
+		if err != nil {
+			_ = ws.WriteJSON(gin.H{"type": "error", "message": "Failed to connect to WhatsApp"})
+			return
+		}
 	}
 
 	for evt := range qrChan {

@@ -21,10 +21,13 @@ func main() {
 	}
 	defer database.Close()
 
-	_, err = whatsapp.InitWAManager(context.Background(), "./crm.db")
+	waMgr, err := whatsapp.InitWAManager(context.Background(), "./crm.db")
 	if err != nil {
 		log.Fatalf("WhatsApp Manager init error: %v", err)
 	}
+
+	waMgr.OnMessageRecv = chat.BroadcastMessage
+	waMgr.AutoConnectSessions(context.Background())
 
 	r := gin.Default()
 
@@ -35,7 +38,7 @@ func main() {
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, PATCH, DELETE")
 
 		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(200)
+			c.AbortWithStatus(http.StatusOK)
 			return
 		}
 
@@ -56,17 +59,17 @@ func main() {
 			c.JSON(http.StatusOK, gin.H{"user_id": userID, "email": email})
 		})
 
-		// CRM
 		api.GET("/clients", crm.GetClients)
 		api.POST("/clients", crm.CreateClient)
 		api.PATCH("/clients/:id/status", crm.UpdateClientStatus)
 
-		// Chat
 		api.GET("/messages", chat.GetMessages)
 		api.POST("/messages/send", chat.SendMessage)
 	}
 
-	log.Println("Server starts on http://localhost:8080")
+	r.Static("/uploads", "./uploads")
+
+	log.Println("Server running on http://localhost:8080")
 	if err := r.Run(":8080"); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}

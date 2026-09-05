@@ -2,6 +2,8 @@ package chat
 
 import (
 	"context"
+	"crmProject/internal/auth"
+	"log"
 	"net/http"
 	"sync"
 
@@ -28,21 +30,44 @@ var (
 	clientsWSMu sync.Mutex
 )
 
+func RegisterClient(ws *websocket.Conn) {
+	clientsWSMu.Lock()
+	defer clientsWSMu.Unlock()
+	clientsWS[ws] = true
+}
+
+func UnregisterClient(ws *websocket.Conn) {
+	clientsWSMu.Lock()
+	defer clientsWSMu.Unlock()
+	delete(clientsWS, ws)
+}
+
 func HandleChatWS(c *gin.Context) {
+
 	ws, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
+		log.Printf("[WS-CHAT] Upgrade error: %v", err)
 		return
 	}
-	defer func() {
-		clientsWSMu.Lock()
-		delete(clientsWS, ws)
-		clientsWSMu.Unlock()
-		ws.Close()
-	}()
+	defer ws.Close()
 
-	clientsWSMu.Lock()
-	clientsWS[ws] = true
-	clientsWSMu.Unlock()
+	tokenStr := c.Query("token")
+	if tokenStr == "" {
+		_ = ws.WriteJSON(gin.H{"type": "error", "message": "Token required"})
+		return
+	}
+
+	_, err = auth.ValidateToken(tokenStr)
+	if err != nil {
+		log.Printf("[WS-CHAT] Token validation failed: %v", err)
+		_ = ws.WriteJSON(gin.H{"type": "error", "message": "Invalid token"})
+		return
+	}
+
+	RegisterClient(ws)
+	defer UnregisterClient(ws)
+
+	log.Println("[WS-CHAT] Клиент успешно подключен к WebSocket чата")
 
 	for {
 		_, _, err := ws.ReadMessage()
@@ -107,28 +132,42 @@ func SendMessage(c *gin.Context) {
 	var phone string
 	err := db.DB.QueryRow("SELECT phone FROM clients WHERE id = ?", input.ClientID).Scan(&phone)
 	if err != nil {
+		log.Printf("[SEND-ERROR] Клиент ID %d не найден в БД: %v", input.ClientID, err)
 		c.JSON(http.StatusNotFound, gin.H{"error": "Client not found"})
 		return
 	}
 
 	ctx := context.Background()
 	client, err := whatsapp.WAManager.GetClient(ctx, userID)
-	if err != nil || !client.IsConnected() {
+	if err != nil || client == nil || !client.IsConnected() {
+		log.Printf("[SEND-ERROR] WhatsApp не подключен для user %d", userID)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "WhatsApp is not connected for this user"})
 		return
 	}
 
-	jid := types.NewJID(phone, types.DefaultUserServer)
+	var jid types.JID
+	if len(phone) > 4 && phone[:4] == "lid_" {
+		jid = types.NewJID(phone[4:], types.HiddenUserServer)
+	} else if len(phone) >= 14 {
+
+		jid = types.NewJID(phone, types.HiddenUserServer)
+	} else {
+
+		jid = types.NewJID(phone, types.DefaultUserServer)
+	}
 
 	waMsg := &waE2E.Message{
 		Conversation: proto.String(input.Text),
 	}
 
-	_, err = client.SendMessage(ctx, jid, waMsg)
+	resp, err := client.SendMessage(ctx, jid, waMsg)
 	if err != nil {
+		log.Printf("[SEND-ERROR] Ошибка отправки в whatsmeow на JID %s: %v", jid.String(), err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to send WA message: " + err.Error()})
 		return
 	}
+
+	log.Printf("[SEND-SUCCESS] Сообщение отправлено на JID %s! ID ответа: %s", jid.String(), resp.ID)
 
 	res, _ := db.DB.Exec("INSERT INTO messages (client_id, sender_phone, text, is_outgoing) VALUES (?, 'me', ?, TRUE)",
 		input.ClientID, input.Text)
@@ -142,6 +181,5 @@ func SendMessage(c *gin.Context) {
 	}
 
 	BroadcastMessage(msgPayload)
-
 	c.JSON(http.StatusOK, msgPayload)
 }
