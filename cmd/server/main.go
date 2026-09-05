@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 
 	"crmProject/internal/auth"
 	"crmProject/internal/db"
+	"crmProject/internal/whatsapp"
 
 	"github.com/gin-gonic/gin"
 )
@@ -16,6 +18,11 @@ func main() {
 		log.Fatalf("Database initialization error: %v", err)
 	}
 	defer database.Close()
+
+	_, err = whatsapp.InitWAManager(context.Background(), "./crm.db")
+	if err != nil {
+		log.Fatalf("WhatsApp Manager init error: %v", err)
+	}
 
 	r := gin.Default()
 
@@ -44,6 +51,8 @@ func main() {
 			email, _ := c.Get("email")
 			c.JSON(http.StatusOK, gin.H{"user_id": userID, "email": email})
 		})
+
+		protected.GET("/ws/whatsapp/qr", whatsapp.HandleQRWebSocket)
 	}
 
 	log.Println("Server starts on http://localhost:8080")
