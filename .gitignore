@@ -1,0 +1,16 @@
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+/vendor/
+*.db
+*.db-journal
+*.sqlite
+.wwebjs_auth/
+/frontend/node_modules/
+/frontend/dist/
+.DS_Store
+.env
