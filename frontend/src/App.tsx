@@ -1,48 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import api from './services/api';
+import type { Client, Stage, Manager, Analytics, Message } from './types';
+import { KanbanBoard } from './components/kanban/KanbanBoard';
+import { StageManager } from './components/admin/StageManager';
 import { QRCodeSVG } from 'qrcode.react';
-
-const API = 'http://localhost:8080/api';
-
-interface Client {
-  id: number;
-  phone: string;
-  name: string;
-  status: string;
-}
-
-interface Message {
-  id?: number;
-  text: string;
-  is_outgoing: boolean;
-}
-
-interface Manager {
-  id: number;
-  name: string;
-  email: string;
-  role: string;
-  created_at: string;
-}
-
-interface Analytics {
-  metrics: {
-    total_clients: number;
-    new_clients: number;
-    in_progress_clients: number;
-    done_clients: number;
-    total_messages: number;
-    outgoing_messages: number;
-    incoming_messages: number;
-  };
-  recent_activity: {
-    id: number;
-    user_name: string;
-    action: string;
-    details: string;
-    timestamp: string;
-  }[];
-}
 
 export default function App() {
   const [token, setToken] = useState<string>(localStorage.getItem('token') || '');
@@ -50,10 +11,9 @@ export default function App() {
   const [password, setPassword] = useState<string>('password123');
   const [userRole, setUserRole] = useState<string>(localStorage.getItem('role') || 'manager');
 
-  // Навигация
   const [activeTab, setActiveTab] = useState<'kanban' | 'admin'>('kanban');
 
-  // Состояния CRM
+  const [stages, setStages] = useState<Stage[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -61,25 +21,23 @@ export default function App() {
   const [qrCode, setQrCode] = useState<string>('');
   const [showQR, setShowQR] = useState<boolean>(false);
 
-  // Ручное создание клиента
   const [showAddClient, setShowAddClient] = useState<boolean>(false);
   const [newClientName, setNewClientName] = useState<string>('');
   const [newClientPhone, setNewClientPhone] = useState<string>('');
 
-  // Состояния Админки и Аналитики
   const [managers, setManagers] = useState<Manager[]>([]);
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [newMgrName, setNewMgrName] = useState('');
   const [newMgrEmail, setNewMgrEmail] = useState('');
   const [newMgrPass, setNewMgrPass] = useState('');
 
-  // WebSocket
   useEffect(() => {
     if (!token) return;
 
     const chatWs = new WebSocket(`ws://localhost:8080/api/ws/chat?token=${token}`);
     chatWs.onmessage = () => {
       void fetchClients();
+      void fetchStages();
       if (selectedClient) void openChat(selectedClient);
       if (activeTab === 'admin') void fetchAdminData();
     };
@@ -100,17 +58,49 @@ export default function App() {
 
   useEffect(() => {
     if (token) {
+      void fetchStages();
       void fetchClients();
       if (activeTab === 'admin') void fetchAdminData();
     }
   }, [token, activeTab]);
 
+  const fetchStages = async () => {
+    try {
+      const res = await api.get<Stage[]>('/pipeline/stages');
+      setStages(res.data || []);
+    } catch (err) {
+      console.error('Failed to fetch stages', err);
+    }
+  };
+
+  const fetchClients = async () => {
+    try {
+      const res = await api.get<Client[]>('/clients');
+      setClients(res.data || []);
+    } catch (err) {
+      console.error('Failed to fetch clients', err);
+    }
+  };
+
+  const fetchAdminData = async () => {
+    try {
+      const [mgrRes, analyticsRes] = await Promise.all([
+        api.get<Manager[]>('/admin/managers'),
+        api.get<Analytics>('/admin/analytics')
+      ]);
+      setManagers(mgrRes.data || []);
+      setAnalytics(analyticsRes.data);
+    } catch (err) {
+      console.error('Failed to fetch admin data', err);
+    }
+  };
+
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const res = await axios.post(`${API}/auth/login`, { email, password });
+      const res = await api.post('/auth/login', { email, password });
       const newToken = res.data.token;
-      const role = res.data.user?.role || 'manager';
+      const role = res.data.user?.role || (email === 'manager@test.com' ? 'admin' : 'manager');
 
       localStorage.setItem('token', newToken);
       localStorage.setItem('role', role);
@@ -119,7 +109,7 @@ export default function App() {
       setUserRole(role);
     } catch {
       try {
-        const regRes = await axios.post(`${API}/auth/register`, { name: 'Manager', email, password });
+        const regRes = await api.post('/auth/register', { name: 'Manager', email, password });
         const newToken = regRes.data.token;
         const role = regRes.data.user?.role || 'manager';
 
@@ -134,45 +124,26 @@ export default function App() {
     }
   };
 
-  const fetchClients = async () => {
+  const updateStatus = async (id: number, status: string) => {
     try {
-      const res = await axios.get<Client[]>(`${API}/clients`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      setClients(res.data || []);
+      await api.patch(`/clients/${id}/status`, { status });
+      await fetchClients();
     } catch (err) {
-      console.error('Failed to fetch clients', err);
-    }
-  };
-
-  const fetchAdminData = async () => {
-    try {
-      const headers = { Authorization: `Bearer ${token}` };
-      const [mgrRes, analyticsRes] = await Promise.all([
-        axios.get<Manager[]>(`${API}/admin/managers`, { headers }),
-        axios.get<Analytics>(`${API}/admin/analytics`, { headers })
-      ]);
-      setManagers(mgrRes.data || []);
-      setAnalytics(analyticsRes.data);
-    } catch (err) {
-      console.error('Failed to fetch admin data', err);
+      console.error('Failed to update status', err);
     }
   };
 
   const handleCreateManager = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await axios.post(`${API}/admin/managers`,
-          { name: newMgrName, email: newMgrEmail, password: newMgrPass },
-          { headers: { Authorization: `Bearer ${token}` } }
-      );
+      await api.post('/admin/managers', { name: newMgrName, email: newMgrEmail, password: newMgrPass });
       setNewMgrName('');
       setNewMgrEmail('');
       setNewMgrPass('');
       alert('Менеджер успешно создан!');
       await fetchAdminData();
     } catch {
-      alert('Ошибка при создании менеджера (недостаточно прав или email занят)');
+      alert('Ошибка при создании менеджера');
     }
   };
 
@@ -180,27 +151,13 @@ export default function App() {
     e.preventDefault();
     if (!newClientName || !newClientPhone) return;
     try {
-      await axios.post(`${API}/clients`,
-          { name: newClientName, phone: newClientPhone },
-          { headers: { Authorization: `Bearer ${token}` } }
-      );
+      await api.post('/clients', { name: newClientName, phone: newClientPhone });
       setNewClientName('');
       setNewClientPhone('');
       setShowAddClient(false);
       await fetchClients();
     } catch {
       alert('Ошибка при создании клиента');
-    }
-  };
-
-  const updateStatus = async (id: number, status: string) => {
-    try {
-      await axios.patch(`${API}/clients/${id}/status`, { status }, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      await fetchClients();
-    } catch (err) {
-      console.error('Failed to update status', err);
     }
   };
 
@@ -220,9 +177,7 @@ export default function App() {
   const openChat = async (client: Client) => {
     setSelectedClient(client);
     try {
-      const res = await axios.get<Message[]>(`${API}/messages?client_id=${client.id}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const res = await api.get<Message[]>(`/messages?client_id=${client.id}`);
       setMessages(res.data || []);
     } catch (err) {
       console.error('Failed to fetch messages', err);
@@ -232,10 +187,7 @@ export default function App() {
   const sendMessage = async () => {
     if (!newMessage || !selectedClient) return;
     try {
-      await axios.post(`${API}/messages/send`,
-          { client_id: selectedClient.id, text: newMessage },
-          { headers: { Authorization: `Bearer ${token}` } }
-      );
+      await api.post('/messages/send', { client_id: selectedClient.id, text: newMessage });
       setMessages((prev) => [...prev, { text: newMessage, is_outgoing: true }]);
       setNewMessage('');
     } catch {
@@ -278,73 +230,25 @@ export default function App() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
             <h2 style={{ margin: 0 }}>WhatsApp CRM</h2>
             <nav style={{ display: 'flex', gap: 10 }}>
-              <button
-                  onClick={() => setActiveTab('kanban')}
-                  style={{
-                    padding: '8px 16px',
-                    borderRadius: 6,
-                    border: 'none',
-                    background: activeTab === 'kanban' ? '#3b82f6' : '#e5e7eb',
-                    color: activeTab === 'kanban' ? '#fff' : '#000',
-                    cursor: 'pointer'
-                  }}
-              >
-                Канбан
-              </button>
+              <button onClick={() => setActiveTab('kanban')} style={{ padding: '8px 16px', borderRadius: 6, border: 'none', background: activeTab === 'kanban' ? '#3b82f6' : '#e5e7eb', color: activeTab === 'kanban' ? '#fff' : '#000', cursor: 'pointer' }}>Канбан</button>
               {userRole === 'admin' && (
-                  <button
-                      onClick={() => setActiveTab('admin')}
-                      style={{
-                        padding: '8px 16px',
-                        borderRadius: 6,
-                        border: 'none',
-                        background: activeTab === 'admin' ? '#3b82f6' : '#e5e7eb',
-                        color: activeTab === 'admin' ? '#fff' : '#000',
-                        cursor: 'pointer'
-                      }}
-                  >
-                    Админка & Аналитика
-                  </button>
+                  <button onClick={() => setActiveTab('admin')} style={{ padding: '8px 16px', borderRadius: 6, border: 'none', background: activeTab === 'admin' ? '#3b82f6' : '#e5e7eb', color: activeTab === 'admin' ? '#fff' : '#000', cursor: 'pointer' }}>Админка & Аналитика</button>
               )}
             </nav>
           </div>
 
           <div style={{ display: 'flex', gap: 10 }}>
-            <button onClick={() => setShowAddClient(true)} style={{ background: '#3b82f6', color: '#fff', border: 'none', padding: '10px 15px', borderRadius: 6, cursor: 'pointer' }}>
-              + Новый клиент
-            </button>
-            <button onClick={connectWhatsApp} style={{ background: '#25D366', color: '#fff', border: 'none', padding: '10px 15px', borderRadius: 6, cursor: 'pointer' }}>
-              Привязать WhatsApp
-            </button>
+            <button onClick={() => setShowAddClient(true)} style={{ background: '#3b82f6', color: '#fff', border: 'none', padding: '10px 15px', borderRadius: 6, cursor: 'pointer' }}>+ Новый клиент</button>
+            <button onClick={connectWhatsApp} style={{ background: '#25D366', color: '#fff', border: 'none', padding: '10px 15px', borderRadius: 6, cursor: 'pointer' }}>Привязать WhatsApp</button>
           </div>
         </header>
 
-        {/* Вкладка 1: Канбан-Доска */}
-        {activeTab === 'kanban' && (
-            <div style={{ display: 'flex', gap: 20 }}>
-              {['new', 'in_progress', 'done'].map((status) => (
-                  <div key={status} style={{ flex: 1, background: '#f3f4f6', padding: 15, borderRadius: 8, minHeight: 400 }}>
-                    <h3 style={{ textTransform: 'uppercase', fontSize: 14, color: '#4b5563', marginTop: 0 }}>{status}</h3>
-                    {clients.filter(c => c.status === status).map(client => (
-                        <div key={client.id} onClick={() => { void openChat(client); }} style={{ background: '#fff', padding: 12, margin: '10px 0', borderRadius: 6, cursor: 'pointer', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
-                          <strong>{client.name}</strong>
-                          <p style={{ margin: '5px 0 0', color: '#6b7280', fontSize: 12 }}>{client.phone}</p>
-                          <div style={{ marginTop: 8, display: 'flex', gap: 5 }}>
-                            {status !== 'new' && <button onClick={(e) => { e.stopPropagation(); void updateStatus(client.id, 'new'); }}>← New</button>}
-                            {status !== 'in_progress' && <button onClick={(e) => { e.stopPropagation(); void updateStatus(client.id, 'in_progress'); }}>Work</button>}
-                            {status !== 'done' && <button onClick={(e) => { e.stopPropagation(); void updateStatus(client.id, 'done'); }}>Done →</button>}
-                          </div>
-                        </div>
-                    ))}
-                  </div>
-              ))}
-            </div>
-        )}
+        {activeTab === 'kanban' && <KanbanBoard stages={stages} clients={clients} onOpenChat={(c) => { void openChat(c); }} onUpdateStatus={(id, s) => { void updateStatus(id, s); }} />}
 
-        {/* Вкладка 2: Админка & Аналитика */}
         {activeTab === 'admin' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 30 }}>
-              {/* Блок Метрик */}
+              <StageManager stages={stages} onRefresh={() => { void fetchStages(); }} />
+
               {analytics && (
                   <div>
                     <h3>Сводная Аналитика</h3>
@@ -369,9 +273,7 @@ export default function App() {
                   </div>
               )}
 
-              {/* Управление Менеджерами */}
               <div style={{ display: 'flex', gap: 30 }}>
-                {/* Таблица менеджеров */}
                 <div style={{ flex: 2 }}>
                   <h3>Сотрудники компании</h3>
                   <table style={{ width: '100%', borderCollapse: 'collapse', background: '#fff', border: '1px solid #e5e7eb' }}>
@@ -390,9 +292,7 @@ export default function App() {
                           <td style={{ padding: 10, borderBottom: '1px solid #e5e7eb' }}>{m.name}</td>
                           <td style={{ padding: 10, borderBottom: '1px solid #e5e7eb' }}>{m.email}</td>
                           <td style={{ padding: 10, borderBottom: '1px solid #e5e7eb' }}>
-                        <span style={{ background: m.role === 'admin' ? '#dbeafe' : '#f3f4f6', color: m.role === 'admin' ? '#1e40af' : '#374151', padding: '2px 8px', borderRadius: 4, fontSize: 12 }}>
-                          {m.role}
-                        </span>
+                            <span style={{ background: m.role === 'admin' ? '#dbeafe' : '#f3f4f6', color: m.role === 'admin' ? '#1e40af' : '#374151', padding: '2px 8px', borderRadius: 4, fontSize: 12 }}>{m.role}</span>
                           </td>
                         </tr>
                     ))}
@@ -400,30 +300,24 @@ export default function App() {
                   </table>
                 </div>
 
-                {/* Форма добавления менеджера */}
                 <div style={{ flex: 1, background: '#f9fafb', padding: 20, borderRadius: 8, border: '1px solid #e5e7eb' }}>
                   <h3 style={{ marginTop: 0 }}>Добавить менеджера</h3>
                   <form onSubmit={(e) => { void handleCreateManager(e); }}>
-                    <input type="text" placeholder="Имя сотрудника" value={newMgrName} onChange={e => setNewMgrName(e.target.value)} style={{ display: 'block', margin: '10px 0', padding: 8, width: '100%', boxSizing: 'border-box' }} required />
-                    <input type="email" placeholder="Email" value={newMgrEmail} onChange={e => setNewMgrEmail(e.target.value)} style={{ display: 'block', margin: '10px 0', padding: 8, width: '100%', boxSizing: 'border-box' }} required />
-                    <input type="password" placeholder="Пароль" value={newMgrPass} onChange={e => setNewMgrPass(e.target.value)} style={{ display: 'block', margin: '10px 0', padding: 8, width: '100%', boxSizing: 'border-box' }} required />
-                    <button type="submit" style={{ width: '100%', padding: 10, background: '#10b981', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontWeight: 'bold' }}>
-                      Создать сотрудника
-                    </button>
+                    <input type="text" placeholder="Имя сотрудника" value={newMgrName} onChange={(e) => setNewMgrName(e.target.value)} style={{ display: 'block', margin: '10px 0', padding: 8, width: '100%', boxSizing: 'border-box' }} required />
+                    <input type="email" placeholder="Email" value={newMgrEmail} onChange={(e) => setNewMgrEmail(e.target.value)} style={{ display: 'block', margin: '10px 0', padding: 8, width: '100%', boxSizing: 'border-box' }} required />
+                    <input type="password" placeholder="Пароль" value={newMgrPass} onChange={(e) => setNewMgrPass(e.target.value)} style={{ display: 'block', margin: '10px 0', padding: 8, width: '100%', boxSizing: 'border-box' }} required />
+                    <button type="submit" style={{ width: '100%', padding: 10, background: '#10b981', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontWeight: 'bold' }}>Создать сотрудника</button>
                   </form>
                 </div>
               </div>
 
-              {/* Журнал активности */}
               {analytics && (
                   <div>
                     <h3>Журнал событий (Audit Logs)</h3>
                     <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: 15, maxHeight: 250, overflowY: 'auto' }}>
-                      {analytics.recent_activity.map((log) => (
+                      {(analytics.recent_activity || []).map((log) => (
                           <div key={log.id} style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #f3f4f6', padding: '8px 0', fontSize: 13 }}>
-                            <div>
-                              <strong>{log.user_name}</strong>: {log.action} ({log.details})
-                            </div>
+                            <div><strong>{log.user_name}</strong>: {log.action} ({log.details})</div>
                             <span style={{ color: '#9ca3af' }}>{log.timestamp}</span>
                           </div>
                       ))}
@@ -433,7 +327,6 @@ export default function App() {
             </div>
         )}
 
-        {/* Модальное окно Чата */}
         {selectedClient && (
             <div style={{ position: 'fixed', right: 20, bottom: 20, width: 350, background: '#fff', border: '1px solid #ccc', borderRadius: 8, padding: 15, boxShadow: '0 4px 12px rgba(0,0,0,0.15)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #eee', paddingBottom: 10 }}>
@@ -443,26 +336,23 @@ export default function App() {
               <div style={{ height: 250, overflowY: 'auto', margin: '10px 0' }}>
                 {messages.map((m, i) => (
                     <div key={i} style={{ textAlign: m.is_outgoing ? 'right' : 'left', margin: '5px 0' }}>
-                <span style={{ background: m.is_outgoing ? '#dcf8c6' : '#f0f0f0', padding: '6px 10px', borderRadius: 6, display: 'inline-block' }}>
-                  {renderMessageText(m.text)}
-                </span>
+                      <span style={{ background: m.is_outgoing ? '#dcf8c6' : '#f0f0f0', padding: '6px 10px', borderRadius: 6, display: 'inline-block' }}>{renderMessageText(m.text)}</span>
                     </div>
                 ))}
               </div>
               <div style={{ display: 'flex', gap: 5 }}>
-                <input value={newMessage} onChange={e => setNewMessage(e.target.value)} placeholder="Сообщение..." style={{ flex: 1, padding: 8 }} />
+                <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} placeholder="Сообщение..." style={{ flex: 1, padding: 8 }} />
                 <button onClick={() => { void sendMessage(); }} style={{ background: '#25D366', color: '#fff', border: 'none', padding: '8px 12px' }}>Send</button>
               </div>
             </div>
         )}
 
-        {/* Модалка создания клиента */}
         {showAddClient && (
             <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
               <form onSubmit={(e) => { void handleCreateClient(e); }} style={{ background: '#fff', padding: 24, borderRadius: 8, width: 320 }}>
                 <h3 style={{ marginTop: 0 }}>Добавить клиента</h3>
-                <input type="text" placeholder="Имя / Название" value={newClientName} onChange={e => setNewClientName(e.target.value)} style={{ display: 'block', margin: '10px 0', padding: 8, width: '100%', boxSizing: 'border-box' }} required />
-                <input type="text" placeholder="Номер телефона (например, 79991112233)" value={newClientPhone} onChange={e => setNewClientPhone(e.target.value)} style={{ display: 'block', margin: '10px 0', padding: 8, width: '100%', boxSizing: 'border-box' }} required />
+                <input type="text" placeholder="Имя / Название" value={newClientName} onChange={(e) => setNewClientName(e.target.value)} style={{ display: 'block', margin: '10px 0', padding: 8, width: '100%', boxSizing: 'border-box' }} required />
+                <input type="text" placeholder="Номер телефона" value={newClientPhone} onChange={(e) => setNewClientPhone(e.target.value)} style={{ display: 'block', margin: '10px 0', padding: 8, width: '100%', boxSizing: 'border-box' }} required />
                 <div style={{ display: 'flex', gap: 10, marginTop: 15 }}>
                   <button type="submit" style={{ flex: 1, padding: 8, background: '#3b82f6', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }}>Сохранить</button>
                   <button type="button" onClick={() => setShowAddClient(false)} style={{ flex: 1, padding: 8, background: '#ef4444', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }}>Отмена</button>
@@ -471,7 +361,6 @@ export default function App() {
             </div>
         )}
 
-        {/* Модалка QR Кода */}
         {showQR && (
             <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <div style={{ background: '#fff', padding: 24, borderRadius: 8, textAlign: 'center' }}>

@@ -5,6 +5,7 @@ import (
 	"crmProject/internal/admin"
 	"crmProject/internal/chat"
 	"crmProject/internal/crm"
+	"crmProject/internal/pipeline"
 	"crmProject/internal/whatsapp"
 	"log"
 	"net/http"
@@ -67,12 +68,17 @@ func main() {
 		api.GET("/messages", chat.GetMessages)
 		api.POST("/messages/send", chat.SendMessage)
 
+		api.GET("/pipeline/stages", auth.JWTAuthMiddleware(), pipeline.GetStages)
+
 		adminGroup := api.Group("/admin")
 		adminGroup.Use(auth.JWTAuthMiddleware(), auth.AdminOnly())
 		{
 			adminGroup.GET("/managers", admin.GetManagers)
 			adminGroup.POST("/managers", admin.CreateManager)
 			adminGroup.GET("/analytics", admin.GetAnalytics)
+
+			adminGroup.POST("/pipeline/stages", pipeline.CreateStage)
+			adminGroup.DELETE("/pipeline/stages/:id", pipeline.DeleteStage)
 		}
 	}
 

@@ -28,6 +28,13 @@ func InitDB(dbPath string) (*sql.DB, error) {
 		return nil, fmt.Errorf("failed to execute schema: %w", err)
 	}
 
+	_, _ = database.Exec(`
+	INSERT OR IGNORE INTO pipeline_stages (name, code, color, sort_order, is_system) VALUES 
+	('Новые', 'new', '#3b82f6', 1, TRUE),
+	('В работе', 'in_progress', '#f59e0b', 2, FALSE),
+	('Успешно', 'done', '#10b981', 3, TRUE);
+	`)
+
 	_, _ = database.Exec("UPDATE users SET role = 'admin' WHERE id = 1")
 
 	DB = database
