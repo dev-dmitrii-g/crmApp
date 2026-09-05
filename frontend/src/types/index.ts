@@ -21,8 +21,11 @@ export interface Stage {
 
 export interface Message {
     id?: number;
+    client_id?: number;
+    sender?: string;
     text: string;
     is_outgoing: boolean;
+    timestamp?: string;
 }
 
 export interface Manager {

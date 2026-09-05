@@ -1,20 +1,26 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import api from './services/api';
 import type { Client, Stage, Manager, Analytics, Message, TransitionRule, StageRequiredField, LossReason, FieldDefinition, FieldStageVisibility } from './types';
 import { KanbanBoard } from './components/kanban/KanbanBoard';
-import { StageManager } from './components/admin/StageManager';
-import { FieldConstructor } from './components/admin/FieldConstructor';
+import { AdminPanel } from './components/admin/AdminPanel';
 import { ClientCard } from './components/crm/ClientCard';
 import { ContactsCompanies } from './components/crm/ContactsCompanies';
-import { QRCodeSVG } from 'qrcode.react';
+import { ChatPanel } from './components/chat/ChatPanel';
+import { c, dotGrid, inp, btn } from './theme';
+import { MessageCircle, Plus, LogOut } from 'lucide-react';
+import { useToast } from './hooks/useToast';
+import { Spinner } from './components/ui/Spinner';
+
+type TabType = 'kanban' | 'counterparties' | 'admin';
 
 export default function App() {
+  const toast = useToast();
   const [token, setToken] = useState<string>(localStorage.getItem('token') || '');
   const [email, setEmail] = useState<string>('manager@test.com');
   const [password, setPassword] = useState<string>('password123');
   const [userRole, setUserRole] = useState<string>(localStorage.getItem('role') || 'manager');
 
-  const [activeTab, setActiveTab] = useState<'kanban' | 'counterparties' | 'admin'>('kanban');
+  const [activeTab, setActiveTab] = useState<TabType>('kanban');
 
   const [stages, setStages] = useState<Stage[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
@@ -27,43 +33,74 @@ export default function App() {
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState<string>('');
-  const [qrCode, setQrCode] = useState<string>('');
-  const [showQR, setShowQR] = useState<boolean>(false);
-
   const [showAddClient, setShowAddClient] = useState<boolean>(false);
   const [newClientName, setNewClientName] = useState<string>('');
   const [newClientPhone, setNewClientPhone] = useState<string>('');
-
+  const [savingClient, setSavingClient] = useState<boolean>(false);
+  const [sendingMsg, setSendingMsg] = useState<boolean>(false);
+  const [loadingKanban, setLoadingKanban] = useState<boolean>(true);
   const [managers, setManagers] = useState<Manager[]>([]);
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
-  const [newMgrName, setNewMgrName] = useState('');
-  const [newMgrEmail, setNewMgrEmail] = useState('');
-  const [newMgrPass, setNewMgrPass] = useState('');
+
+  const isAdmin = userRole === 'admin';
+  const [loadingMessages, setLoadingMessages] = useState(false);
+
+  // Refs to avoid WS closure stale-state bug
+  const selectedClientRef = useRef<Client | null>(null);
+  const activeTabRef = useRef<TabType>('kanban');
+  const fetchClientsRef = useRef<() => Promise<void>>(() => Promise.resolve());
+  const fetchAdminDataRef = useRef<() => Promise<void>>(() => Promise.resolve());
+  useEffect(() => { selectedClientRef.current = selectedClient; }, [selectedClient]);
+  useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
 
   useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowAddClient(false);
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
+
+  // Single WS connection — only reconnects when token changes
+  useEffect(() => {
     if (!token) return;
-
     const chatWs = new WebSocket(`ws://localhost:8080/api/ws/chat?token=${token}`);
-    chatWs.onmessage = () => {
-      void fetchClients();
-      void fetchStages();
-      if (selectedClient) void openChat(selectedClient);
-      if (activeTab === 'admin') void fetchAdminData();
-    };
-
-    const pingInterval = setInterval(() => {
-      if (chatWs.readyState === WebSocket.OPEN) {
-        chatWs.send(JSON.stringify({ type: 'ping' }));
+    chatWs.onmessage = (evt) => {
+      try {
+        const data = JSON.parse(evt.data as string) as {
+          type?: string; id?: number; client_id?: number;
+          text?: string; is_outgoing?: boolean;
+        };
+        if (data.type === 'new_message' && data.client_id != null) {
+          const sc = selectedClientRef.current;
+          // Append to current chat if this client's chat is open
+          if (sc && sc.id === data.client_id) {
+            setMessages(prev => {
+              // Deduplicate by ID for outgoing (optimistic add gave no ID yet)
+              if (data.is_outgoing && prev.some(m => m.id === data.id)) return prev;
+              return [...prev, {
+                id: data.id,
+                client_id: data.client_id,
+                text: data.text ?? '',
+                is_outgoing: data.is_outgoing ?? false,
+                timestamp: new Date().toISOString(),
+              }];
+            });
+          }
+          // Refresh client list (new leads, unread counts)
+          void fetchClientsRef.current();
+          if (activeTabRef.current === 'admin') void fetchAdminDataRef.current();
+        }
+      } catch {
+        // Non-JSON (shouldn't happen)
+        void fetchClientsRef.current();
       }
+    };
+    const ping = setInterval(() => {
+      if (chatWs.readyState === WebSocket.OPEN) chatWs.send(JSON.stringify({ type: 'ping' }));
     }, 30000);
-
-    return () => {
-      clearInterval(pingInterval);
-      if (chatWs.readyState === WebSocket.OPEN || chatWs.readyState === WebSocket.CONNECTING) {
-        chatWs.close();
-      }
-    };
-  }, [token, selectedClient, activeTab]);
+    return () => { clearInterval(ping); if (chatWs.readyState < 2) chatWs.close(); };
+  }, [token]); // ← no more selectedClient/activeTab in deps
 
   useEffect(() => {
     if (token) {
@@ -73,9 +110,9 @@ export default function App() {
     }
   }, [token, activeTab]);
 
-  const fetchStages = async () => {
+  const fetchStages = useCallback(async () => {
     try {
-      const [stagesRes, rulesRes, stageFieldsRes, reasonsRes, fieldDefsRes, fieldVisRes] = await Promise.all([
+      const [sR, trR, srR, lrR, fdR, fvR] = await Promise.all([
         api.get<Stage[]>('/pipeline/stages'),
         api.get<TransitionRule[]>('/pipeline/transition-rules'),
         api.get<StageRequiredField[]>('/pipeline/stage-fields'),
@@ -83,65 +120,56 @@ export default function App() {
         api.get<FieldDefinition[]>('/pipeline/field-definitions'),
         api.get<FieldStageVisibility[]>('/pipeline/field-visibility'),
       ]);
-      setStages(stagesRes.data || []);
-      setTransitionRules(rulesRes.data || []);
-      setStageRequiredFields(stageFieldsRes.data || []);
-      setLossReasons(reasonsRes.data || []);
-      setFieldDefinitions(fieldDefsRes.data || []);
-      setFieldVisibility(fieldVisRes.data || []);
-    } catch (err) {
-      console.error('Failed to fetch stages', err);
-    }
-  };
+      setStages(sR.data || []);
+      setTransitionRules(trR.data || []);
+      setStageRequiredFields(srR.data || []);
+      setLossReasons(lrR.data || []);
+      setFieldDefinitions(fdR.data || []);
+      setFieldVisibility(fvR.data || []);
+    } catch (err) { console.error(err); }
+  }, []);
 
-  const fetchClients = async () => {
+  const fetchClients = useCallback(async () => {
     try {
-      const res = await api.get<Client[]>('/clients');
-      setClients(res.data || []);
-    } catch (err) {
-      console.error('Failed to fetch clients', err);
-    }
-  };
+      const r = await api.get<Client[]>('/clients');
+      setClients(r.data || []);
+    } catch (err) { console.error(err); }
+    finally { setLoadingKanban(false); }
+  }, []);
 
-  const fetchAdminData = async () => {
+  const fetchAdminData = useCallback(async () => {
     try {
-      const [mgrRes, analyticsRes] = await Promise.all([
+      const [mR, aR] = await Promise.all([
         api.get<Manager[]>('/admin/managers'),
-        api.get<Analytics>('/admin/analytics')
+        api.get<Analytics>('/admin/analytics'),
       ]);
-      setManagers(mgrRes.data || []);
-      setAnalytics(analyticsRes.data);
-    } catch (err) {
-      console.error('Failed to fetch admin data', err);
-    }
-  };
+      setManagers(mR.data || []);
+      setAnalytics(aR.data);
+    } catch (err) { console.error(err); }
+  }, []);
+
+  // Keep function refs fresh so the WS handler always calls the latest version
+  useEffect(() => { fetchClientsRef.current = fetchClients; }, [fetchClients]);
+  useEffect(() => { fetchAdminDataRef.current = fetchAdminData; }, [fetchAdminData]);
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
       const res = await api.post('/auth/login', { email, password });
-      const newToken = res.data.token;
-      const role = res.data.user?.role || (email === 'manager@test.com' ? 'admin' : 'manager');
-
-      localStorage.setItem('token', newToken);
+      const tok = res.data.token;
+      const role = res.data.user?.role || 'manager';
+      localStorage.setItem('token', tok);
       localStorage.setItem('role', role);
-
-      setToken(newToken);
-      setUserRole(role);
+      setToken(tok); setUserRole(role);
     } catch {
       try {
-        const regRes = await api.post('/auth/register', { name: 'Manager', email, password });
-        const newToken = regRes.data.token;
-        const role = regRes.data.user?.role || 'manager';
-
-        localStorage.setItem('token', newToken);
+        const res = await api.post('/auth/register', { name: 'Manager', email, password });
+        const tok = res.data.token;
+        const role = res.data.user?.role || 'manager';
+        localStorage.setItem('token', tok);
         localStorage.setItem('role', role);
-
-        setToken(newToken);
-        setUserRole(role);
-      } catch (err) {
-        alert('Ошибка авторизации');
-      }
+        setToken(tok); setUserRole(role);
+      } catch { toast.error('Ошибка авторизации — проверьте email и пароль'); }
     }
   };
 
@@ -150,284 +178,268 @@ export default function App() {
       await api.patch(`/clients/${id}/status`, { status, loss_reason: lossReason, custom_fields: customFields });
       await fetchClients();
     } catch (err: unknown) {
-      const axiosErr = err as { response?: { data?: { error?: string }; status?: number } };
-      const msg = axiosErr?.response?.data?.error;
-      if (msg) alert(msg);
-      else console.error('Failed to update status', err);
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
+      toast.error(msg || 'Не удалось переместить карточку');
     }
   };
 
-  const handleCreateManager = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      await api.post('/admin/managers', { name: newMgrName, email: newMgrEmail, password: newMgrPass });
-      setNewMgrName('');
-      setNewMgrEmail('');
-      setNewMgrPass('');
-      alert('Менеджер успешно создан!');
-      await fetchAdminData();
-    } catch {
-      alert('Ошибка при создании менеджера');
-    }
+  const reorderStages = async (draggedId: number, targetId: number) => {
+    const sorted = [...stages].sort((a, b) => a.sort_order - b.sort_order);
+    const fi = sorted.findIndex(s => s.id === draggedId);
+    const ti = sorted.findIndex(s => s.id === targetId);
+    if (fi === -1 || ti === -1) return;
+    const r = [...sorted];
+    const [m] = r.splice(fi, 1);
+    r.splice(ti, 0, m);
+    setStages(r.map((s, i) => ({ ...s, sort_order: i })));
+    try { await api.put('/admin/pipeline/stages/reorder', { ids: r.map(s => s.id) }); }
+    catch { await fetchStages(); }
   };
 
   const handleCreateClient = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newClientName || !newClientPhone) return;
+    setSavingClient(true);
     try {
       await api.post('/clients', { name: newClientName, phone: newClientPhone });
-      setNewClientName('');
-      setNewClientPhone('');
-      setShowAddClient(false);
+      toast.success(`Клиент «${newClientName}» создан`);
+      setNewClientName(''); setNewClientPhone(''); setShowAddClient(false);
       await fetchClients();
-    } catch {
-      alert('Ошибка при создании клиента');
-    }
-  };
-
-  const connectWhatsApp = () => {
-    setShowQR(true);
-    const ws = new WebSocket(`ws://localhost:8080/api/ws/whatsapp/qr?token=${token}`);
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      if (data.type === 'qr') setQrCode(data.code);
-      if (data.status === 'connected') {
-        setShowQR(false);
-        alert('WhatsApp успешно подключен!');
-      }
-    };
+    } catch { toast.error('Ошибка при создании клиента'); }
+    finally { setSavingClient(false); }
   };
 
   const openChat = async (client: Client) => {
     setSelectedClient(client);
+    setMessages([]);
+    setLoadingMessages(true);
     try {
-      const res = await api.get<Message[]>(`/messages?client_id=${client.id}`);
-      setMessages(res.data || []);
-    } catch (err) {
-      console.error('Failed to fetch messages', err);
-    }
+      const r = await api.get<Message[]>(`/messages?client_id=${client.id}`);
+      setMessages(r.data || []);
+    } catch { toast.error('Не удалось загрузить сообщения'); }
+    finally { setLoadingMessages(false); }
   };
 
   const sendMessage = async () => {
-    if (!newMessage || !selectedClient) return;
+    if (!newMessage.trim() || !selectedClient) return;
+    setSendingMsg(true);
+    const text = newMessage;
+    setNewMessage('');
     try {
-      await api.post('/messages/send', { client_id: selectedClient.id, text: newMessage });
-      setMessages((prev) => [...prev, { text: newMessage, is_outgoing: true }]);
-      setNewMessage('');
+      const r = await api.post<Message>('/messages/send', { client_id: selectedClient.id, text });
+      // Add the confirmed message (with real ID and timestamp) — skip if WS already added it
+      setMessages(prev => {
+        if (r.data.id && prev.some(m => m.id === r.data.id)) return prev;
+        return [...prev, { ...r.data, timestamp: new Date().toISOString() }];
+      });
     } catch {
-      alert('Ошибка отправки сообщения');
+      toast.error('Не удалось отправить сообщение');
+      setNewMessage(text); // restore
     }
+    finally { setSendingMsg(false); }
   };
 
-  const renderMessageText = (text: string) => {
-    if (text.includes('📷 Картинка: http') || text.includes('📷 [Картинка: http')) {
-      const url = text.match(/http:\/\/localhost:8080\/uploads\/[^\s\]]+/)?.[0];
-      return url ? <img src={url} alt="WA Media" style={{ maxWidth: 220, borderRadius: 6, display: 'block', margin: '4px 0' }} /> : text;
-    }
-    if (text.includes('🎤 Голосовое сообщение: http')) {
-      const url = text.split('🎤 Голосовое сообщение: ')[1];
-      return <audio controls src={url} style={{ maxWidth: 220, margin: '4px 0' }} />;
-    }
-    if (text.includes('📄 Документ: http')) {
-      const url = text.split('📄 Документ: ')[1];
-      return <a href={url} target="_blank" rel="noreferrer" style={{ color: '#2563eb', textDecoration: 'underline' }}>Скачать документ</a>;
-    }
-    return text;
-  };
-
+  // ─── Login ────────────────────────────────────────────────────────────────
   if (!token) {
     return (
-        <div style={{ display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center', background: '#f3f4f6' }}>
-          <form onSubmit={(e) => { void handleAuth(e); }} style={{ background: '#fff', padding: 30, borderRadius: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.1)', width: 320 }}>
-            <h2 style={{ marginTop: 0, textAlign: 'center' }}>Вход в CRM</h2>
-            <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="Email" style={{ display: 'block', margin: '12px 0', padding: 10, width: '100%', boxSizing: 'border-box' }} />
-            <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Пароль" style={{ display: 'block', margin: '12px 0', padding: 10, width: '100%', boxSizing: 'border-box' }} />
-            <button type="submit" style={{ width: '100%', padding: 12, background: '#25D366', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold' }}>Войти</button>
-          </form>
-        </div>
+      <div style={{ display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center', background: c.bgBase, ...dotGrid }}>
+        <form onSubmit={e => { void handleAuth(e); }}
+          style={{ background: c.bgCard, border: `1px solid ${c.borderMd}`, borderRadius: 16, padding: '36px 32px', width: 340, boxShadow: '0 24px 80px rgba(0,0,0,0.5)' }}>
+          <div style={{ textAlign: 'center', marginBottom: 28 }}>
+            <div style={{ width: 48, height: 48, borderRadius: 14, background: 'linear-gradient(135deg,#25D366,#128C7E)', margin: '0 auto 14px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <MessageCircle size={24} color="#fff" strokeWidth={2} />
+            </div>
+            <h2 style={{ margin: 0, fontSize: 20, color: c.text1, fontWeight: 700 }}>Вход в CRM</h2>
+            <p style={{ margin: '6px 0 0', fontSize: 13, color: c.text2 }}>WhatsApp CRM Platform</p>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="Email" style={inp()} />
+            <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Пароль" style={inp()} />
+            <button type="submit" style={btn('#25D366', { padding: '11px', fontSize: 14, fontWeight: 700, borderRadius: 10, marginTop: 4, boxShadow: '0 4px 14px rgba(37,211,102,0.25)' })}>
+              Войти
+            </button>
+          </div>
+        </form>
+      </div>
     );
   }
 
+  // ─── App ──────────────────────────────────────────────────────────────────
+  const navTabs: { key: TabType; label: string }[] = [
+    { key: 'kanban', label: 'Канбан' },
+    { key: 'counterparties', label: 'Контрагенты' },
+    ...(isAdmin ? [{ key: 'admin' as TabType, label: 'Настройки' }] : []),
+  ];
+
   return (
-      <div style={{ padding: 20, fontFamily: 'Arial, sans-serif' }}>
-        <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, borderBottom: '2px solid #e5e7eb', paddingBottom: 15 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
-            <h2 style={{ margin: 0 }}>WhatsApp CRM</h2>
-            <nav style={{ display: 'flex', gap: 10 }}>
-              <button onClick={() => setActiveTab('kanban')} style={{ padding: '8px 16px', borderRadius: 6, border: 'none', background: activeTab === 'kanban' ? '#3b82f6' : '#e5e7eb', color: activeTab === 'kanban' ? '#fff' : '#000', cursor: 'pointer' }}>Канбан</button>
-              <button onClick={() => setActiveTab('counterparties')} style={{ padding: '8px 16px', borderRadius: 6, border: 'none', background: activeTab === 'counterparties' ? '#10b981' : '#e5e7eb', color: activeTab === 'counterparties' ? '#fff' : '#000', cursor: 'pointer' }}>Контрагенты</button>
-              {userRole === 'admin' && (
-                  <button onClick={() => setActiveTab('admin')} style={{ padding: '8px 16px', borderRadius: 6, border: 'none', background: activeTab === 'admin' ? '#3b82f6' : '#e5e7eb', color: activeTab === 'admin' ? '#fff' : '#000', cursor: 'pointer' }}>Админка & Аналитика</button>
-              )}
-            </nav>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: c.bgBase, overflow: 'hidden' }}>
+      {/* ── Header ── */}
+      <header style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '0 20px', height: 52, borderBottom: `1px solid ${c.border}`,
+        background: c.bgCard, flexShrink: 0, gap: 16,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 20, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+            <div style={{ width: 28, height: 28, borderRadius: 8, background: 'linear-gradient(135deg,#25D366,#128C7E)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <MessageCircle size={15} color="#fff" strokeWidth={2} />
+            </div>
+            <span style={{ fontWeight: 700, fontSize: 14, color: c.text1, whiteSpace: 'nowrap' }}>WhatsApp CRM</span>
           </div>
+          <nav style={{ display: 'flex', gap: 2 }}>
+            {navTabs.map(t => (
+              <button key={t.key} onClick={() => setActiveTab(t.key)} style={{
+                padding: '5px 14px', border: 'none', borderRadius: 7, cursor: 'pointer', fontSize: 13,
+                fontWeight: activeTab === t.key ? 600 : 400,
+                background: activeTab === t.key ? 'rgba(59,130,246,0.15)' : 'transparent',
+                color: activeTab === t.key ? c.blue : c.text2,
+                transition: 'all 0.15s', whiteSpace: 'nowrap',
+              }}>{t.label}</button>
+            ))}
+          </nav>
+        </div>
 
-          <div style={{ display: 'flex', gap: 10 }}>
-            <button onClick={() => setShowAddClient(true)} style={{ background: '#3b82f6', color: '#fff', border: 'none', padding: '10px 15px', borderRadius: 6, cursor: 'pointer' }}>+ Новый клиент</button>
-            <button onClick={connectWhatsApp} style={{ background: '#25D366', color: '#fff', border: 'none', padding: '10px 15px', borderRadius: 6, cursor: 'pointer' }}>Привязать WhatsApp</button>
-          </div>
-        </header>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+          <button
+            onClick={() => { localStorage.clear(); setToken(''); setUserRole('manager'); }}
+            title="Выйти"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 12px', background: 'transparent', border: `1px solid ${c.border}`, borderRadius: 7, color: c.text2, cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' }}
+          ><LogOut size={13} strokeWidth={1.8} /> Выйти</button>
+        </div>
+      </header>
 
-        {activeTab === 'kanban' && <KanbanBoard
-            stages={stages}
-            clients={clients}
-            transitionRules={transitionRules}
-            stageRequiredFields={stageRequiredFields}
-            lossReasons={lossReasons}
-            onOpenChat={(c) => { void openChat(c); }}
-            onOpenCard={(c) => setCardClient(c)}
-            onUpdateStatus={(id, s, r, cf) => { void updateStatus(id, s, r, cf); }}
-        />}
+      {/* ── Content ── */}
+      <main style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', position: 'relative' }}>
+
+        {/* Kanban */}
+        {activeTab === 'kanban' && (
+          <>
+            <div style={{ flex: 1, padding: '14px 16px', overflowX: 'auto', overflowY: 'hidden', ...dotGrid }}>
+              <KanbanBoard
+                stages={stages}
+                clients={clients}
+                transitionRules={transitionRules}
+                stageRequiredFields={stageRequiredFields}
+                lossReasons={lossReasons}
+                isAdmin={isAdmin}
+                loading={loadingKanban}
+                onOpenChat={cl => { void openChat(cl); }}
+                onOpenCard={cl => setCardClient(cl)}
+                onUpdateStatus={(id, s, r, cf) => { void updateStatus(id, s, r, cf); }}
+                onReorderStages={(did, tid) => { void reorderStages(did, tid); }}
+              />
+            </div>
+            {/* FAB: Add client */}
+            <button
+              onClick={() => setShowAddClient(true)}
+              title="Добавить клиента"
+              style={{
+                position: 'fixed', bottom: 28, right: 28,
+                width: 52, height: 52, borderRadius: '50%',
+                background: c.blue, border: 'none', cursor: 'pointer',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                boxShadow: `0 4px 20px ${c.blue}50`,
+                transition: 'transform 0.15s, box-shadow 0.15s', zIndex: 200,
+              }}
+              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1.08)'; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1)'; }}
+            ><Plus size={22} color="#fff" strokeWidth={2.5} /></button>
+          </>
+        )}
 
         {activeTab === 'counterparties' && (
-            <div style={{ background: '#fff', borderRadius: 8, border: '1px solid #e5e7eb', padding: '0 20px 20px' }}>
-                <h3 style={{ marginTop: 20 }}>База контрагентов</h3>
-                <ContactsCompanies />
-            </div>
+          <div style={{ flex: 1, overflowY: 'auto', padding: '20px' }}>
+            <ContactsCompanies />
+          </div>
         )}
 
         {activeTab === 'admin' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 30 }}>
-              <StageManager stages={stages} onRefresh={() => { void fetchStages(); }} />
-              <FieldConstructor
-                  stages={stages}
-                  fieldDefinitions={fieldDefinitions}
-                  fieldVisibility={fieldVisibility}
-                  onRefresh={() => { void fetchStages(); }}
-              />
-
-              {analytics && (
-                  <div>
-                    <h3>Сводная Аналитика</h3>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 15 }}>
-                      <div style={{ background: '#eff6ff', padding: 15, borderRadius: 8, textAlign: 'center' }}>
-                        <span style={{ fontSize: 24, fontWeight: 'bold', color: '#1d4ed8' }}>{analytics.metrics.total_clients}</span>
-                        <div style={{ fontSize: 13, color: '#4b5563' }}>Всего клиентов</div>
-                      </div>
-                      <div style={{ background: '#f0fdf4', padding: 15, borderRadius: 8, textAlign: 'center' }}>
-                        <span style={{ fontSize: 24, fontWeight: 'bold', color: '#15803d' }}>{analytics.metrics.done_clients}</span>
-                        <div style={{ fontSize: 13, color: '#4b5563' }}>Завершенных сделок</div>
-                      </div>
-                      <div style={{ background: '#fefce8', padding: 15, borderRadius: 8, textAlign: 'center' }}>
-                        <span style={{ fontSize: 24, fontWeight: 'bold', color: '#a16207' }}>{analytics.metrics.total_messages}</span>
-                        <div style={{ fontSize: 13, color: '#4b5563' }}>Всего сообщений</div>
-                      </div>
-                      <div style={{ background: '#fef2f2', padding: 15, borderRadius: 8, textAlign: 'center' }}>
-                        <span style={{ fontSize: 24, fontWeight: 'bold', color: '#b91c1c' }}>{analytics.metrics.outgoing_messages}</span>
-                        <div style={{ fontSize: 13, color: '#4b5563' }}>Исходящих менеджерами</div>
-                      </div>
-                    </div>
-                  </div>
-              )}
-
-              <div style={{ display: 'flex', gap: 30 }}>
-                <div style={{ flex: 2 }}>
-                  <h3>Сотрудники компании</h3>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', background: '#fff', border: '1px solid #e5e7eb' }}>
-                    <thead>
-                    <tr style={{ background: '#f9fafb', textAlign: 'left' }}>
-                      <th style={{ padding: 10, borderBottom: '1px solid #e5e7eb' }}>ID</th>
-                      <th style={{ padding: 10, borderBottom: '1px solid #e5e7eb' }}>Имя</th>
-                      <th style={{ padding: 10, borderBottom: '1px solid #e5e7eb' }}>Email</th>
-                      <th style={{ padding: 10, borderBottom: '1px solid #e5e7eb' }}>Роль</th>
-                    </tr>
-                    </thead>
-                    <tbody>
-                    {managers.map((m) => (
-                        <tr key={m.id}>
-                          <td style={{ padding: 10, borderBottom: '1px solid #e5e7eb' }}>{m.id}</td>
-                          <td style={{ padding: 10, borderBottom: '1px solid #e5e7eb' }}>{m.name}</td>
-                          <td style={{ padding: 10, borderBottom: '1px solid #e5e7eb' }}>{m.email}</td>
-                          <td style={{ padding: 10, borderBottom: '1px solid #e5e7eb' }}>
-                            <span style={{ background: m.role === 'admin' ? '#dbeafe' : '#f3f4f6', color: m.role === 'admin' ? '#1e40af' : '#374151', padding: '2px 8px', borderRadius: 4, fontSize: 12 }}>{m.role}</span>
-                          </td>
-                        </tr>
-                    ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                <div style={{ flex: 1, background: '#f9fafb', padding: 20, borderRadius: 8, border: '1px solid #e5e7eb' }}>
-                  <h3 style={{ marginTop: 0 }}>Добавить менеджера</h3>
-                  <form onSubmit={(e) => { void handleCreateManager(e); }}>
-                    <input type="text" placeholder="Имя сотрудника" value={newMgrName} onChange={(e) => setNewMgrName(e.target.value)} style={{ display: 'block', margin: '10px 0', padding: 8, width: '100%', boxSizing: 'border-box' }} required />
-                    <input type="email" placeholder="Email" value={newMgrEmail} onChange={(e) => setNewMgrEmail(e.target.value)} style={{ display: 'block', margin: '10px 0', padding: 8, width: '100%', boxSizing: 'border-box' }} required />
-                    <input type="password" placeholder="Пароль" value={newMgrPass} onChange={(e) => setNewMgrPass(e.target.value)} style={{ display: 'block', margin: '10px 0', padding: 8, width: '100%', boxSizing: 'border-box' }} required />
-                    <button type="submit" style={{ width: '100%', padding: 10, background: '#10b981', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontWeight: 'bold' }}>Создать сотрудника</button>
-                  </form>
-                </div>
-              </div>
-
-              {analytics && (
-                  <div>
-                    <h3>Журнал событий (Audit Logs)</h3>
-                    <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: 15, maxHeight: 250, overflowY: 'auto' }}>
-                      {(analytics.recent_activity || []).map((log) => (
-                          <div key={log.id} style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #f3f4f6', padding: '8px 0', fontSize: 13 }}>
-                            <div><strong>{log.user_name}</strong>: {log.action} ({log.details})</div>
-                            <span style={{ color: '#9ca3af' }}>{log.timestamp}</span>
-                          </div>
-                      ))}
-                    </div>
-                  </div>
-              )}
-            </div>
-        )}
-
-        {selectedClient && (
-            <div style={{ position: 'fixed', right: 20, bottom: 20, width: 350, background: '#fff', border: '1px solid #ccc', borderRadius: 8, padding: 15, boxShadow: '0 4px 12px rgba(0,0,0,0.15)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #eee', paddingBottom: 10 }}>
-                <h4>Чат с {selectedClient.name}</h4>
-                <button onClick={() => setSelectedClient(null)}>✕</button>
-              </div>
-              <div style={{ height: 250, overflowY: 'auto', margin: '10px 0' }}>
-                {messages.map((m, i) => (
-                    <div key={i} style={{ textAlign: m.is_outgoing ? 'right' : 'left', margin: '5px 0' }}>
-                      <span style={{ background: m.is_outgoing ? '#dcf8c6' : '#f0f0f0', padding: '6px 10px', borderRadius: 6, display: 'inline-block' }}>{renderMessageText(m.text)}</span>
-                    </div>
-                ))}
-              </div>
-              <div style={{ display: 'flex', gap: 5 }}>
-                <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} placeholder="Сообщение..." style={{ flex: 1, padding: 8 }} />
-                <button onClick={() => { void sendMessage(); }} style={{ background: '#25D366', color: '#fff', border: 'none', padding: '8px 12px' }}>Send</button>
-              </div>
-            </div>
-        )}
-
-        {showAddClient && (
-            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-              <form onSubmit={(e) => { void handleCreateClient(e); }} style={{ background: '#fff', padding: 24, borderRadius: 8, width: 320 }}>
-                <h3 style={{ marginTop: 0 }}>Добавить клиента</h3>
-                <input type="text" placeholder="Имя / Название" value={newClientName} onChange={(e) => setNewClientName(e.target.value)} style={{ display: 'block', margin: '10px 0', padding: 8, width: '100%', boxSizing: 'border-box' }} required />
-                <input type="text" placeholder="Номер телефона" value={newClientPhone} onChange={(e) => setNewClientPhone(e.target.value)} style={{ display: 'block', margin: '10px 0', padding: 8, width: '100%', boxSizing: 'border-box' }} required />
-                <div style={{ display: 'flex', gap: 10, marginTop: 15 }}>
-                  <button type="submit" style={{ flex: 1, padding: 8, background: '#3b82f6', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }}>Сохранить</button>
-                  <button type="button" onClick={() => setShowAddClient(false)} style={{ flex: 1, padding: 8, background: '#ef4444', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }}>Отмена</button>
-                </div>
-              </form>
-            </div>
-        )}
-
-        {cardClient && (
-            <ClientCard
-                client={cardClient}
-                stages={stages}
-                fieldDefinitions={fieldDefinitions}
-                fieldVisibility={fieldVisibility}
-                onClose={() => setCardClient(null)}
-                onRefresh={() => { void fetchClients(); }}
+          <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
+            <AdminPanel
+              stages={stages}
+              fieldDefinitions={fieldDefinitions}
+              fieldVisibility={fieldVisibility}
+              managers={managers}
+              analytics={analytics}
+              onRefresh={() => { void fetchStages(); void fetchAdminData(); }}
             />
+          </div>
         )}
+      </main>
 
-        {showQR && (
-            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <div style={{ background: '#fff', padding: 24, borderRadius: 8, textAlign: 'center' }}>
-                <h3>Отсканируйте QR-код в WhatsApp</h3>
-                {qrCode ? <QRCodeSVG value={qrCode} size={200} /> : <p>Загрузка QR...</p>}
-                <button onClick={() => setShowQR(false)} style={{ marginTop: 15 }}>Закрыть</button>
+      {/* ── Chat panel ── */}
+      {selectedClient && (
+        <ChatPanel
+          client={selectedClient}
+          messages={messages}
+          loadingMessages={loadingMessages}
+          sendingMsg={sendingMsg}
+          newMessage={newMessage}
+          onNewMessage={setNewMessage}
+          onSend={() => { void sendMessage(); }}
+          onClose={() => { setSelectedClient(null); setMessages([]); }}
+        />
+      )}
+
+      {/* ── Add client modal ── */}
+      {showAddClient && (
+        <Overlay onClose={() => setShowAddClient(false)}>
+          <form onSubmit={e => { void handleCreateClient(e); }} style={modalBox} onClick={e => e.stopPropagation()}>
+            <p style={modalTitle}>Новый клиент</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div>
+                <Label>Имя / Название</Label>
+                <input autoFocus placeholder="Иванов Иван" value={newClientName} onChange={e => setNewClientName(e.target.value)} style={inp()} required />
+              </div>
+              <div>
+                <Label>Номер телефона</Label>
+                <input type="tel" placeholder="+7 900 000-00-00" value={newClientPhone} onChange={e => setNewClientPhone(e.target.value)} style={inp()} required />
               </div>
             </div>
-        )}
-      </div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 20 }}>
+              <button type="submit" disabled={savingClient} aria-busy={savingClient}
+                style={{ ...btn(c.blue, { flex: 1, padding: '10px', borderRadius: 9, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }), opacity: savingClient ? 0.6 : 1, cursor: savingClient ? 'default' : 'pointer' }}>
+                {savingClient ? <Spinner size={14} color="#fff" /> : null} Создать
+              </button>
+              <button type="button" onClick={() => setShowAddClient(false)} style={btn('rgba(255,255,255,0.06)', { flex: 1, padding: '10px', borderRadius: 9, border: `1px solid ${c.border}`, color: c.text1 })}>Отмена</button>
+            </div>
+          </form>
+        </Overlay>
+      )}
+
+      {/* ── Client card ── */}
+      {cardClient && (
+        <ClientCard
+          client={cardClient}
+          stages={stages}
+          fieldDefinitions={fieldDefinitions}
+          fieldVisibility={fieldVisibility}
+          onClose={() => setCardClient(null)}
+          onRefresh={() => { void fetchClients(); }}
+        />
+      )}
+
+    </div>
   );
 }
+
+// ─── Shared UI atoms ──────────────────────────────────────────────────────────
+
+export const Overlay: React.FC<{ children: React.ReactNode; onClose: () => void }> = ({ children, onClose }) => (
+  <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.72)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+    {children}
+  </div>
+);
+
+export const modalBox: React.CSSProperties = {
+  background: '#18181b', border: '1px solid rgba(255,255,255,0.10)',
+  borderRadius: 16, padding: '28px', width: 380, maxWidth: 'calc(100vw - 40px)',
+  boxShadow: '0 24px 80px rgba(0,0,0,0.7)',
+};
+
+export const modalTitle: React.CSSProperties = {
+  margin: '0 0 20px', fontWeight: 700, fontSize: 17, color: '#f0f0f0',
+};
+
+export const Label: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <div style={{ fontSize: 12, color: '#8a8a8a', fontWeight: 600, marginBottom: 5 }}>{children}</div>
+);
