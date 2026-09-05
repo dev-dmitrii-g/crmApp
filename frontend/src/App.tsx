@@ -17,10 +17,43 @@ interface Message {
   is_outgoing: boolean;
 }
 
+interface Manager {
+  id: number;
+  name: string;
+  email: string;
+  role: string;
+  created_at: string;
+}
+
+interface Analytics {
+  metrics: {
+    total_clients: number;
+    new_clients: number;
+    in_progress_clients: number;
+    done_clients: number;
+    total_messages: number;
+    outgoing_messages: number;
+    incoming_messages: number;
+  };
+  recent_activity: {
+    id: number;
+    user_name: string;
+    action: string;
+    details: string;
+    timestamp: string;
+  }[];
+}
+
 export default function App() {
   const [token, setToken] = useState<string>(localStorage.getItem('token') || '');
   const [email, setEmail] = useState<string>('manager@test.com');
   const [password, setPassword] = useState<string>('password123');
+  const [userRole, setUserRole] = useState<string>(localStorage.getItem('role') || 'manager');
+
+  // Навигация
+  const [activeTab, setActiveTab] = useState<'kanban' | 'admin'>('kanban');
+
+  // Состояния CRM
   const [clients, setClients] = useState<Client[]>([]);
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -28,25 +61,29 @@ export default function App() {
   const [qrCode, setQrCode] = useState<string>('');
   const [showQR, setShowQR] = useState<boolean>(false);
 
-  // Состояния для добавления нового клиента
+  // Ручное создание клиента
   const [showAddClient, setShowAddClient] = useState<boolean>(false);
   const [newClientName, setNewClientName] = useState<string>('');
   const [newClientPhone, setNewClientPhone] = useState<string>('');
 
-  // WebSocket для живых обновлений чата и доски
+  // Состояния Админки и Аналитики
+  const [managers, setManagers] = useState<Manager[]>([]);
+  const [analytics, setAnalytics] = useState<Analytics | null>(null);
+  const [newMgrName, setNewMgrName] = useState('');
+  const [newMgrEmail, setNewMgrEmail] = useState('');
+  const [newMgrPass, setNewMgrPass] = useState('');
+
+  // WebSocket
   useEffect(() => {
     if (!token) return;
 
     const chatWs = new WebSocket(`ws://localhost:8080/api/ws/chat?token=${token}`);
-
     chatWs.onmessage = () => {
       void fetchClients();
-      if (selectedClient) {
-        void openChat(selectedClient);
-      }
+      if (selectedClient) void openChat(selectedClient);
+      if (activeTab === 'admin') void fetchAdminData();
     };
 
-    // Keep-alive ping
     const pingInterval = setInterval(() => {
       if (chatWs.readyState === WebSocket.OPEN) {
         chatWs.send(JSON.stringify({ type: 'ping' }));
@@ -59,27 +96,38 @@ export default function App() {
         chatWs.close();
       }
     };
-  }, [token, selectedClient]);
+  }, [token, selectedClient, activeTab]);
 
   useEffect(() => {
     if (token) {
       void fetchClients();
+      if (activeTab === 'admin') void fetchAdminData();
     }
-  }, [token]);
+  }, [token, activeTab]);
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
       const res = await axios.post(`${API}/auth/login`, { email, password });
       const newToken = res.data.token;
+      const role = res.data.user?.role || 'manager';
+
       localStorage.setItem('token', newToken);
+      localStorage.setItem('role', role);
+
       setToken(newToken);
+      setUserRole(role);
     } catch {
       try {
         const regRes = await axios.post(`${API}/auth/register`, { name: 'Manager', email, password });
         const newToken = regRes.data.token;
+        const role = regRes.data.user?.role || 'manager';
+
         localStorage.setItem('token', newToken);
+        localStorage.setItem('role', role);
+
         setToken(newToken);
+        setUserRole(role);
       } catch (err) {
         alert('Ошибка авторизации');
       }
@@ -97,21 +145,50 @@ export default function App() {
     }
   };
 
+  const fetchAdminData = async () => {
+    try {
+      const headers = { Authorization: `Bearer ${token}` };
+      const [mgrRes, analyticsRes] = await Promise.all([
+        axios.get<Manager[]>(`${API}/admin/managers`, { headers }),
+        axios.get<Analytics>(`${API}/admin/analytics`, { headers })
+      ]);
+      setManagers(mgrRes.data || []);
+      setAnalytics(analyticsRes.data);
+    } catch (err) {
+      console.error('Failed to fetch admin data', err);
+    }
+  };
+
+  const handleCreateManager = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await axios.post(`${API}/admin/managers`,
+          { name: newMgrName, email: newMgrEmail, password: newMgrPass },
+          { headers: { Authorization: `Bearer ${token}` } }
+      );
+      setNewMgrName('');
+      setNewMgrEmail('');
+      setNewMgrPass('');
+      alert('Менеджер успешно создан!');
+      await fetchAdminData();
+    } catch {
+      alert('Ошибка при создании менеджера (недостаточно прав или email занят)');
+    }
+  };
+
   const handleCreateClient = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newClientName || !newClientPhone) return;
-
     try {
       await axios.post(`${API}/clients`,
           { name: newClientName, phone: newClientPhone },
           { headers: { Authorization: `Bearer ${token}` } }
       );
-
       setNewClientName('');
       setNewClientPhone('');
       setShowAddClient(false);
       await fetchClients();
-    } catch (err) {
+    } catch {
       alert('Ошибка при создании клиента');
     }
   };
@@ -161,12 +238,11 @@ export default function App() {
       );
       setMessages((prev) => [...prev, { text: newMessage, is_outgoing: true }]);
       setNewMessage('');
-    } catch (err) {
+    } catch {
       alert('Ошибка отправки сообщения');
     }
   };
 
-  // Парсинг ссылок и медиа в сообщениях
   const renderMessageText = (text: string) => {
     if (text.includes('📷 Картинка: http') || text.includes('📷 [Картинка: http')) {
       const url = text.match(/http:\/\/localhost:8080\/uploads\/[^\s\]]+/)?.[0];
@@ -185,21 +261,54 @@ export default function App() {
 
   if (!token) {
     return (
-        <div style={{ display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center' }}>
-          <form onSubmit={(e) => { void handleAuth(e); }} style={{ background: '#fff', padding: 24, borderRadius: 8, boxShadow: '0 2px 10px rgba(0,0,0,0.1)' }}>
-            <h2>Вход в CRM</h2>
-            <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="Email" style={{ display: 'block', margin: '10px 0', padding: 8, width: '100%' }} />
-            <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Пароль" style={{ display: 'block', margin: '10px 0', padding: 8, width: '100%' }} />
-            <button type="submit" style={{ width: '100%', padding: 10, background: '#25D366', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }}>Войти</button>
+        <div style={{ display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center', background: '#f3f4f6' }}>
+          <form onSubmit={(e) => { void handleAuth(e); }} style={{ background: '#fff', padding: 30, borderRadius: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.1)', width: 320 }}>
+            <h2 style={{ marginTop: 0, textAlign: 'center' }}>Вход в CRM</h2>
+            <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="Email" style={{ display: 'block', margin: '12px 0', padding: 10, width: '100%', boxSizing: 'border-box' }} />
+            <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Пароль" style={{ display: 'block', margin: '12px 0', padding: 10, width: '100%', boxSizing: 'border-box' }} />
+            <button type="submit" style={{ width: '100%', padding: 12, background: '#25D366', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold' }}>Войти</button>
           </form>
         </div>
     );
   }
 
   return (
-      <div style={{ padding: 20 }}>
-        <header style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 20 }}>
-          <h2>WhatsApp CRM Канбан</h2>
+      <div style={{ padding: 20, fontFamily: 'Arial, sans-serif' }}>
+        <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, borderBottom: '2px solid #e5e7eb', paddingBottom: 15 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
+            <h2 style={{ margin: 0 }}>WhatsApp CRM</h2>
+            <nav style={{ display: 'flex', gap: 10 }}>
+              <button
+                  onClick={() => setActiveTab('kanban')}
+                  style={{
+                    padding: '8px 16px',
+                    borderRadius: 6,
+                    border: 'none',
+                    background: activeTab === 'kanban' ? '#3b82f6' : '#e5e7eb',
+                    color: activeTab === 'kanban' ? '#fff' : '#000',
+                    cursor: 'pointer'
+                  }}
+              >
+                Канбан
+              </button>
+              {userRole === 'admin' && (
+                  <button
+                      onClick={() => setActiveTab('admin')}
+                      style={{
+                        padding: '8px 16px',
+                        borderRadius: 6,
+                        border: 'none',
+                        background: activeTab === 'admin' ? '#3b82f6' : '#e5e7eb',
+                        color: activeTab === 'admin' ? '#fff' : '#000',
+                        cursor: 'pointer'
+                      }}
+                  >
+                    Админка & Аналитика
+                  </button>
+              )}
+            </nav>
+          </div>
+
           <div style={{ display: 'flex', gap: 10 }}>
             <button onClick={() => setShowAddClient(true)} style={{ background: '#3b82f6', color: '#fff', border: 'none', padding: '10px 15px', borderRadius: 6, cursor: 'pointer' }}>
               + Новый клиент
@@ -210,27 +319,121 @@ export default function App() {
           </div>
         </header>
 
-        {/* Канбан Доска */}
-        <div style={{ display: 'flex', gap: 20 }}>
-          {['new', 'in_progress', 'done'].map((status) => (
-              <div key={status} style={{ flex: 1, background: '#e5e7eb', padding: 15, borderRadius: 8, minHeight: 400 }}>
-                <h3 style={{ textTransform: 'uppercase', fontSize: 14, color: '#4b5563' }}>{status}</h3>
-                {clients.filter(c => c.status === status).map(client => (
-                    <div key={client.id} onClick={() => { void openChat(client); }} style={{ background: '#fff', padding: 12, margin: '10px 0', borderRadius: 6, cursor: 'pointer', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
-                      <strong>{client.name}</strong>
-                      <p style={{ margin: '5px 0 0', color: '#6b7280', fontSize: 12 }}>{client.phone}</p>
-                      <div style={{ marginTop: 8, display: 'flex', gap: 5 }}>
-                        {status !== 'new' && <button onClick={(e) => { e.stopPropagation(); void updateStatus(client.id, 'new'); }}>← New</button>}
-                        {status !== 'in_progress' && <button onClick={(e) => { e.stopPropagation(); void updateStatus(client.id, 'in_progress'); }}>Work</button>}
-                        {status !== 'done' && <button onClick={(e) => { e.stopPropagation(); void updateStatus(client.id, 'done'); }}>Done →</button>}
+        {/* Вкладка 1: Канбан-Доска */}
+        {activeTab === 'kanban' && (
+            <div style={{ display: 'flex', gap: 20 }}>
+              {['new', 'in_progress', 'done'].map((status) => (
+                  <div key={status} style={{ flex: 1, background: '#f3f4f6', padding: 15, borderRadius: 8, minHeight: 400 }}>
+                    <h3 style={{ textTransform: 'uppercase', fontSize: 14, color: '#4b5563', marginTop: 0 }}>{status}</h3>
+                    {clients.filter(c => c.status === status).map(client => (
+                        <div key={client.id} onClick={() => { void openChat(client); }} style={{ background: '#fff', padding: 12, margin: '10px 0', borderRadius: 6, cursor: 'pointer', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
+                          <strong>{client.name}</strong>
+                          <p style={{ margin: '5px 0 0', color: '#6b7280', fontSize: 12 }}>{client.phone}</p>
+                          <div style={{ marginTop: 8, display: 'flex', gap: 5 }}>
+                            {status !== 'new' && <button onClick={(e) => { e.stopPropagation(); void updateStatus(client.id, 'new'); }}>← New</button>}
+                            {status !== 'in_progress' && <button onClick={(e) => { e.stopPropagation(); void updateStatus(client.id, 'in_progress'); }}>Work</button>}
+                            {status !== 'done' && <button onClick={(e) => { e.stopPropagation(); void updateStatus(client.id, 'done'); }}>Done →</button>}
+                          </div>
+                        </div>
+                    ))}
+                  </div>
+              ))}
+            </div>
+        )}
+
+        {/* Вкладка 2: Админка & Аналитика */}
+        {activeTab === 'admin' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 30 }}>
+              {/* Блок Метрик */}
+              {analytics && (
+                  <div>
+                    <h3>Сводная Аналитика</h3>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 15 }}>
+                      <div style={{ background: '#eff6ff', padding: 15, borderRadius: 8, textAlign: 'center' }}>
+                        <span style={{ fontSize: 24, fontWeight: 'bold', color: '#1d4ed8' }}>{analytics.metrics.total_clients}</span>
+                        <div style={{ fontSize: 13, color: '#4b5563' }}>Всего клиентов</div>
+                      </div>
+                      <div style={{ background: '#f0fdf4', padding: 15, borderRadius: 8, textAlign: 'center' }}>
+                        <span style={{ fontSize: 24, fontWeight: 'bold', color: '#15803d' }}>{analytics.metrics.done_clients}</span>
+                        <div style={{ fontSize: 13, color: '#4b5563' }}>Завершенных сделок</div>
+                      </div>
+                      <div style={{ background: '#fefce8', padding: 15, borderRadius: 8, textAlign: 'center' }}>
+                        <span style={{ fontSize: 24, fontWeight: 'bold', color: '#a16207' }}>{analytics.metrics.total_messages}</span>
+                        <div style={{ fontSize: 13, color: '#4b5563' }}>Всего сообщений</div>
+                      </div>
+                      <div style={{ background: '#fef2f2', padding: 15, borderRadius: 8, textAlign: 'center' }}>
+                        <span style={{ fontSize: 24, fontWeight: 'bold', color: '#b91c1c' }}>{analytics.metrics.outgoing_messages}</span>
+                        <div style={{ fontSize: 13, color: '#4b5563' }}>Исходящих менеджерами</div>
                       </div>
                     </div>
-                ))}
-              </div>
-          ))}
-        </div>
+                  </div>
+              )}
 
-        {/* Чат */}
+              {/* Управление Менеджерами */}
+              <div style={{ display: 'flex', gap: 30 }}>
+                {/* Таблица менеджеров */}
+                <div style={{ flex: 2 }}>
+                  <h3>Сотрудники компании</h3>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', background: '#fff', border: '1px solid #e5e7eb' }}>
+                    <thead>
+                    <tr style={{ background: '#f9fafb', textAlign: 'left' }}>
+                      <th style={{ padding: 10, borderBottom: '1px solid #e5e7eb' }}>ID</th>
+                      <th style={{ padding: 10, borderBottom: '1px solid #e5e7eb' }}>Имя</th>
+                      <th style={{ padding: 10, borderBottom: '1px solid #e5e7eb' }}>Email</th>
+                      <th style={{ padding: 10, borderBottom: '1px solid #e5e7eb' }}>Роль</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    {managers.map((m) => (
+                        <tr key={m.id}>
+                          <td style={{ padding: 10, borderBottom: '1px solid #e5e7eb' }}>{m.id}</td>
+                          <td style={{ padding: 10, borderBottom: '1px solid #e5e7eb' }}>{m.name}</td>
+                          <td style={{ padding: 10, borderBottom: '1px solid #e5e7eb' }}>{m.email}</td>
+                          <td style={{ padding: 10, borderBottom: '1px solid #e5e7eb' }}>
+                        <span style={{ background: m.role === 'admin' ? '#dbeafe' : '#f3f4f6', color: m.role === 'admin' ? '#1e40af' : '#374151', padding: '2px 8px', borderRadius: 4, fontSize: 12 }}>
+                          {m.role}
+                        </span>
+                          </td>
+                        </tr>
+                    ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Форма добавления менеджера */}
+                <div style={{ flex: 1, background: '#f9fafb', padding: 20, borderRadius: 8, border: '1px solid #e5e7eb' }}>
+                  <h3 style={{ marginTop: 0 }}>Добавить менеджера</h3>
+                  <form onSubmit={(e) => { void handleCreateManager(e); }}>
+                    <input type="text" placeholder="Имя сотрудника" value={newMgrName} onChange={e => setNewMgrName(e.target.value)} style={{ display: 'block', margin: '10px 0', padding: 8, width: '100%', boxSizing: 'border-box' }} required />
+                    <input type="email" placeholder="Email" value={newMgrEmail} onChange={e => setNewMgrEmail(e.target.value)} style={{ display: 'block', margin: '10px 0', padding: 8, width: '100%', boxSizing: 'border-box' }} required />
+                    <input type="password" placeholder="Пароль" value={newMgrPass} onChange={e => setNewMgrPass(e.target.value)} style={{ display: 'block', margin: '10px 0', padding: 8, width: '100%', boxSizing: 'border-box' }} required />
+                    <button type="submit" style={{ width: '100%', padding: 10, background: '#10b981', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontWeight: 'bold' }}>
+                      Создать сотрудника
+                    </button>
+                  </form>
+                </div>
+              </div>
+
+              {/* Журнал активности */}
+              {analytics && (
+                  <div>
+                    <h3>Журнал событий (Audit Logs)</h3>
+                    <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: 15, maxHeight: 250, overflowY: 'auto' }}>
+                      {analytics.recent_activity.map((log) => (
+                          <div key={log.id} style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #f3f4f6', padding: '8px 0', fontSize: 13 }}>
+                            <div>
+                              <strong>{log.user_name}</strong>: {log.action} ({log.details})
+                            </div>
+                            <span style={{ color: '#9ca3af' }}>{log.timestamp}</span>
+                          </div>
+                      ))}
+                    </div>
+                  </div>
+              )}
+            </div>
+        )}
+
+        {/* Модальное окно Чата */}
         {selectedClient && (
             <div style={{ position: 'fixed', right: 20, bottom: 20, width: 350, background: '#fff', border: '1px solid #ccc', borderRadius: 8, padding: 15, boxShadow: '0 4px 12px rgba(0,0,0,0.15)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #eee', paddingBottom: 10 }}>
@@ -253,26 +456,13 @@ export default function App() {
             </div>
         )}
 
+        {/* Модалка создания клиента */}
         {showAddClient && (
             <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
               <form onSubmit={(e) => { void handleCreateClient(e); }} style={{ background: '#fff', padding: 24, borderRadius: 8, width: 320 }}>
                 <h3 style={{ marginTop: 0 }}>Добавить клиента</h3>
-                <input
-                    type="text"
-                    placeholder="Имя / Название"
-                    value={newClientName}
-                    onChange={e => setNewClientName(e.target.value)}
-                    style={{ display: 'block', margin: '10px 0', padding: 8, width: '100%', boxSizing: 'border-box' }}
-                    required
-                />
-                <input
-                    type="text"
-                    placeholder="Номер телефона (например, 79991112233)"
-                    value={newClientPhone}
-                    onChange={e => setNewClientPhone(e.target.value)}
-                    style={{ display: 'block', margin: '10px 0', padding: 8, width: '100%', boxSizing: 'border-box' }}
-                    required
-                />
+                <input type="text" placeholder="Имя / Название" value={newClientName} onChange={e => setNewClientName(e.target.value)} style={{ display: 'block', margin: '10px 0', padding: 8, width: '100%', boxSizing: 'border-box' }} required />
+                <input type="text" placeholder="Номер телефона (например, 79991112233)" value={newClientPhone} onChange={e => setNewClientPhone(e.target.value)} style={{ display: 'block', margin: '10px 0', padding: 8, width: '100%', boxSizing: 'border-box' }} required />
                 <div style={{ display: 'flex', gap: 10, marginTop: 15 }}>
                   <button type="submit" style={{ flex: 1, padding: 8, background: '#3b82f6', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }}>Сохранить</button>
                   <button type="button" onClick={() => setShowAddClient(false)} style={{ flex: 1, padding: 8, background: '#ef4444', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }}>Отмена</button>
@@ -281,6 +471,7 @@ export default function App() {
             </div>
         )}
 
+        {/* Модалка QR Кода */}
         {showQR && (
             <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <div style={{ background: '#fff', padding: 24, borderRadius: 8, textAlign: 'center' }}>

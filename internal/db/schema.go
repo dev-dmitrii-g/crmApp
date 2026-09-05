@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS users (
     email TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
     name TEXT NOT NULL,
+    role TEXT DEFAULT 'manager', -- 'admin' или 'manager'
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -35,5 +36,14 @@ CREATE TABLE IF NOT EXISTS messages (
     is_outgoing BOOLEAN DEFAULT FALSE,
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(client_id) REFERENCES clients(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    action TEXT NOT NULL,
+    details TEXT,
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE SET NULL
 );
 `

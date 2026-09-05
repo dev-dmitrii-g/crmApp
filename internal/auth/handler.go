@@ -75,15 +75,30 @@ func Login(c *gin.Context) {
 		return
 	}
 
+	if userID == 1 {
+		_, _ = db.DB.Exec("UPDATE users SET role = 'admin' WHERE id = 1")
+	}
+
 	token, err := GenerateToken(userID, input.Email)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
 		return
 	}
 
+	var role string
+	err = db.DB.QueryRow("SELECT role FROM users WHERE id = ?", userID).Scan(&role)
+	if err != nil || role == "" {
+		role = "manager"
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"token": token,
-		"user":  gin.H{"id": userID, "name": name, "email": input.Email},
+		"user": gin.H{
+			"id":    userID,
+			"name":  name,
+			"email": input.Email,
+			"role":  role,
+		},
 	})
 }
 

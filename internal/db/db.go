@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"log"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -27,7 +28,19 @@ func InitDB(dbPath string) (*sql.DB, error) {
 		return nil, fmt.Errorf("failed to execute schema: %w", err)
 	}
 
+	_, _ = database.Exec("UPDATE users SET role = 'admin' WHERE id = 1")
+
 	DB = database
 	fmt.Println("Database initialized successfully at:", dbPath)
 	return database, nil
+}
+
+func LogAction(userID uint, action string, details string) {
+	if DB == nil {
+		return
+	}
+	_, err := DB.Exec("INSERT INTO audit_logs (user_id, action, details) VALUES (?, ?, ?)", userID, action, details)
+	if err != nil {
+		log.Printf("[AUDIT-ERROR] Не удалось записать лог: %v", err)
+	}
 }

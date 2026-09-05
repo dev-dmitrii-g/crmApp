@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crmProject/internal/admin"
 	"crmProject/internal/chat"
 	"crmProject/internal/crm"
 	"crmProject/internal/whatsapp"
@@ -65,6 +66,14 @@ func main() {
 
 		api.GET("/messages", chat.GetMessages)
 		api.POST("/messages/send", chat.SendMessage)
+
+		adminGroup := api.Group("/admin")
+		adminGroup.Use(auth.JWTAuthMiddleware(), auth.AdminOnly())
+		{
+			adminGroup.GET("/managers", admin.GetManagers)
+			adminGroup.POST("/managers", admin.CreateManager)
+			adminGroup.GET("/analytics", admin.GetAnalytics)
+		}
 	}
 
 	r.Static("/uploads", "./uploads")
