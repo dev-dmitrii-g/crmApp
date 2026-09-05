@@ -2,13 +2,14 @@ package main
 
 import (
 	"context"
+	"crmProject/internal/chat"
 	"crmProject/internal/crm"
+	"crmProject/internal/whatsapp"
 	"log"
 	"net/http"
 
 	"crmProject/internal/auth"
 	"crmProject/internal/db"
-	"crmProject/internal/whatsapp"
 
 	"github.com/gin-gonic/gin"
 )
@@ -53,11 +54,18 @@ func main() {
 			c.JSON(http.StatusOK, gin.H{"user_id": userID, "email": email})
 		})
 
+		// CRM эндпоинты
 		protected.GET("/clients", crm.GetClients)
 		protected.POST("/clients", crm.CreateClient)
 		protected.PATCH("/clients/:id/status", crm.UpdateClientStatus)
 
+		// Чат эндпоинты
+		protected.GET("/messages", chat.GetMessages)
+		protected.POST("/messages/send", chat.SendMessage)
+
+		// WebSockets
 		protected.GET("/ws/whatsapp/qr", whatsapp.HandleQRWebSocket)
+		protected.GET("/ws/chat", chat.HandleChatWS)
 	}
 
 	log.Println("Server starts on http://localhost:8080")

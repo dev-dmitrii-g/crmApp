@@ -9,6 +9,7 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.52
 	go.mau.fi/whatsmeow v0.0.0-20260904121843-28bfe537ea6a
 	golang.org/x/crypto v0.56.0
+	google.golang.org/protobuf v1.36.12
 )
 
 require (
@@ -52,5 +53,4 @@ require (
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
-	google.golang.org/protobuf v1.36.12 // indirect
 )
