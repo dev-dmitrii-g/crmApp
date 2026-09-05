@@ -69,6 +69,10 @@ func main() {
 		api.POST("/messages/send", chat.SendMessage)
 
 		api.GET("/pipeline/stages", auth.JWTAuthMiddleware(), pipeline.GetStages)
+		api.GET("/pipeline/transition-rules", auth.JWTAuthMiddleware(), pipeline.GetTransitionRules)
+		api.GET("/pipeline/stage-fields", auth.JWTAuthMiddleware(), pipeline.GetStageRequiredFields)
+
+		api.GET("/crm/loss-reasons", crm.GetLossReasons)
 
 		adminGroup := api.Group("/admin")
 		adminGroup.Use(auth.JWTAuthMiddleware(), auth.AdminOnly())
@@ -78,7 +82,18 @@ func main() {
 			adminGroup.GET("/analytics", admin.GetAnalytics)
 
 			adminGroup.POST("/pipeline/stages", pipeline.CreateStage)
+			adminGroup.PATCH("/pipeline/stages/:id", pipeline.UpdateStage)
+			adminGroup.PUT("/pipeline/stages/reorder", pipeline.ReorderStages)
 			adminGroup.DELETE("/pipeline/stages/:id", pipeline.DeleteStage)
+
+			adminGroup.POST("/pipeline/transition-rules", pipeline.CreateTransitionRule)
+			adminGroup.DELETE("/pipeline/transition-rules/:id", pipeline.DeleteTransitionRule)
+
+			adminGroup.POST("/pipeline/stage-fields", pipeline.CreateStageRequiredField)
+			adminGroup.DELETE("/pipeline/stage-fields/:id", pipeline.DeleteStageRequiredField)
+
+			adminGroup.POST("/crm/loss-reasons", crm.CreateLossReason)
+			adminGroup.DELETE("/crm/loss-reasons/:id", crm.DeleteLossReason)
 		}
 	}
 

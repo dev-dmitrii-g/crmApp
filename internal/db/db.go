@@ -28,14 +28,28 @@ func InitDB(dbPath string) (*sql.DB, error) {
 		return nil, fmt.Errorf("failed to execute schema: %w", err)
 	}
 
+	// Safe migrations for existing databases
+	_, _ = database.Exec("ALTER TABLE pipeline_stages ADD COLUMN is_success BOOLEAN DEFAULT FALSE")
+	_, _ = database.Exec("ALTER TABLE clients ADD COLUMN custom_fields TEXT DEFAULT '{}'")
+
 	_, _ = database.Exec(`
-	INSERT OR IGNORE INTO pipeline_stages (name, code, color, sort_order, is_system) VALUES 
-	('Новые', 'new', '#3b82f6', 1, TRUE),
-	('В работе', 'in_progress', '#f59e0b', 2, FALSE),
-	('Успешно', 'done', '#10b981', 3, TRUE);
-	`)
+		INSERT OR IGNORE INTO pipeline_stages (name, code, color, sort_order, is_system, is_fail) VALUES 
+		('Новые', 'new', '#3b82f6', 1, TRUE, FALSE),
+		('В работе', 'in_progress', '#f59e0b', 2, FALSE, FALSE),
+		('Успешно', 'done', '#10b981', 3, TRUE, FALSE),
+		('Отказ', 'rejected', '#ef4444', 4, TRUE, TRUE);
+		`)
+
+	_, _ = database.Exec(`
+		INSERT OR IGNORE INTO loss_reasons (name) VALUES 
+		('Высокая цена'),
+		('Ушел к конкурентам'),
+		('Не дозвонились'),
+		('Другое');
+		`)
 
 	_, _ = database.Exec("UPDATE users SET role = 'admin' WHERE id = 1")
+	_, _ = database.Exec("UPDATE pipeline_stages SET is_success = TRUE WHERE code = 'done'")
 
 	DB = database
 	fmt.Println("Database initialized successfully at:", dbPath)

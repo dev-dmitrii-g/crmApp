@@ -3,6 +3,8 @@ export interface Client {
     phone: string;
     name: string;
     status: string;
+    loss_reason?: string;
+    custom_fields?: Record<string, string>;
 }
 
 export interface Stage {
@@ -13,6 +15,8 @@ export interface Stage {
     sort_order: number;
     wip_limit: number;
     is_system: boolean;
+    is_fail?: boolean;
+    is_success?: boolean;
 }
 
 export interface Message {
@@ -46,4 +50,22 @@ export interface Analytics {
         details: string;
         timestamp: string;
     }[];
+}
+
+export interface LossReason {
+    id: number;
+    name: string;
+}
+
+export interface TransitionRule {
+    id: number;
+    from_stage_code: string;
+    to_stage_code: string;
+}
+
+export interface StageRequiredField {
+    id: number;
+    stage_code: string;
+    field_name: string;
+    field_label: string;
 }

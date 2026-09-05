@@ -16,8 +16,9 @@ CREATE TABLE IF NOT EXISTS pipeline_stages (
     code TEXT UNIQUE NOT NULL,
     color TEXT DEFAULT '#3b82f6',
     sort_order INTEGER DEFAULT 0,
-    wip_limit INTEGER DEFAULT 0, -- 0 = без лимита
+    wip_limit INTEGER DEFAULT 0,
     is_system BOOLEAN DEFAULT FALSE,
+    is_fail BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -33,7 +34,8 @@ CREATE TABLE IF NOT EXISTS clients (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     phone TEXT NOT NULL,
     name TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'new', -- 'new', 'in_progress', 'done'
+    status TEXT NOT NULL DEFAULT 'new',
+    loss_reason TEXT DEFAULT '',
     manager_id INTEGER,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(manager_id) REFERENCES users(id) ON DELETE SET NULL
@@ -56,5 +58,28 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     details TEXT,
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS loss_reasons (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT UNIQUE NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS stage_transition_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    from_stage_code TEXT NOT NULL,
+    to_stage_code TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(from_stage_code, to_stage_code)
+);
+
+CREATE TABLE IF NOT EXISTS stage_required_fields (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    stage_code TEXT NOT NULL,
+    field_name TEXT NOT NULL,
+    field_label TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(stage_code, field_name)
 );
 `

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import api from './services/api';
-import type { Client, Stage, Manager, Analytics, Message } from './types';
+import type { Client, Stage, Manager, Analytics, Message, TransitionRule, StageRequiredField, LossReason } from './types';
 import { KanbanBoard } from './components/kanban/KanbanBoard';
 import { StageManager } from './components/admin/StageManager';
 import { QRCodeSVG } from 'qrcode.react';
@@ -15,6 +15,9 @@ export default function App() {
 
   const [stages, setStages] = useState<Stage[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
+  const [transitionRules, setTransitionRules] = useState<TransitionRule[]>([]);
+  const [stageRequiredFields, setStageRequiredFields] = useState<StageRequiredField[]>([]);
+  const [lossReasons, setLossReasons] = useState<LossReason[]>([]);
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState<string>('');
@@ -66,8 +69,16 @@ export default function App() {
 
   const fetchStages = async () => {
     try {
-      const res = await api.get<Stage[]>('/pipeline/stages');
-      setStages(res.data || []);
+      const [stagesRes, rulesRes, fieldsRes, reasonsRes] = await Promise.all([
+        api.get<Stage[]>('/pipeline/stages'),
+        api.get<TransitionRule[]>('/pipeline/transition-rules'),
+        api.get<StageRequiredField[]>('/pipeline/stage-fields'),
+        api.get<LossReason[]>('/crm/loss-reasons'),
+      ]);
+      setStages(stagesRes.data || []);
+      setTransitionRules(rulesRes.data || []);
+      setStageRequiredFields(fieldsRes.data || []);
+      setLossReasons(reasonsRes.data || []);
     } catch (err) {
       console.error('Failed to fetch stages', err);
     }
@@ -124,12 +135,15 @@ export default function App() {
     }
   };
 
-  const updateStatus = async (id: number, status: string) => {
+  const updateStatus = async (id: number, status: string, lossReason?: string, customFields?: Record<string, string>) => {
     try {
-      await api.patch(`/clients/${id}/status`, { status });
+      await api.patch(`/clients/${id}/status`, { status, loss_reason: lossReason, custom_fields: customFields });
       await fetchClients();
-    } catch (err) {
-      console.error('Failed to update status', err);
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { error?: string }; status?: number } };
+      const msg = axiosErr?.response?.data?.error;
+      if (msg) alert(msg);
+      else console.error('Failed to update status', err);
     }
   };
 
@@ -243,7 +257,15 @@ export default function App() {
           </div>
         </header>
 
-        {activeTab === 'kanban' && <KanbanBoard stages={stages} clients={clients} onOpenChat={(c) => { void openChat(c); }} onUpdateStatus={(id, s) => { void updateStatus(id, s); }} />}
+        {activeTab === 'kanban' && <KanbanBoard
+            stages={stages}
+            clients={clients}
+            transitionRules={transitionRules}
+            stageRequiredFields={stageRequiredFields}
+            lossReasons={lossReasons}
+            onOpenChat={(c) => { void openChat(c); }}
+            onUpdateStatus={(id, s, r, cf) => { void updateStatus(id, s, r, cf); }}
+        />}
 
         {activeTab === 'admin' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 30 }}>
