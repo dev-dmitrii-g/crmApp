@@ -1,6 +1,10 @@
 import React, { useState } from 'react';
+import { Plus, Pencil, Trash2, Check, X, LayoutGrid } from 'lucide-react';
 import api from '../../services/api';
+import { useToast } from '../../hooks/useToast';
+import { Spinner } from '../ui/Spinner';
 import type { FieldDefinition, FieldStageVisibility, Stage, FieldVisibilityMode } from '../../types';
+import { c, inp, btn } from '../../theme';
 
 interface Props {
     stages: Stage[];
@@ -20,255 +24,276 @@ const FIELD_TYPES = [
     { value: 'formula', label: 'Калькулятор' },
 ];
 
-const inp: React.CSSProperties = { padding: '6px 8px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 13 };
-const btn = (bg: string, color = '#fff'): React.CSSProperties => ({
-    padding: '5px 12px', background: bg, color, border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12,
-});
-
-const VISIBILITY_OPTIONS: { value: FieldVisibilityMode; label: string; color: string }[] = [
-    { value: 'normal', label: 'Обычное', color: '#6b7280' },
-    { value: 'required', label: 'Обязательное', color: '#dc2626' },
-    { value: 'hidden', label: 'Скрытое', color: '#9ca3af' },
+const VISIBILITY_OPTIONS: { value: FieldVisibilityMode; label: string; color: string; bg: string }[] = [
+    { value: 'normal', label: 'Обычное', color: '#8a8a8a', bg: 'rgba(255,255,255,0.06)' },
+    { value: 'required', label: 'Обязательное', color: '#ef4444', bg: 'rgba(239,68,68,0.12)' },
+    { value: 'hidden', label: 'Скрытое', color: '#4a4a4f', bg: 'rgba(255,255,255,0.03)' },
 ];
 
 export const FieldConstructor: React.FC<Props> = ({ stages, fieldDefinitions, fieldVisibility, onRefresh }) => {
+    const toast = useToast();
     const [tab, setTab] = useState<Tab>('fields');
 
-    // New field form
     const [name, setName] = useState('');
     const [key, setKey] = useState('');
     const [type, setType] = useState('text');
-    const [options, setOptions] = useState(''); // comma-separated
+    const [options, setOptions] = useState('');
     const [formula, setFormula] = useState('');
+    const [savingCreate, setSavingCreate] = useState(false);
 
-    // Edit
     const [editingId, setEditingId] = useState<number | null>(null);
     const [editName, setEditName] = useState('');
     const [editOptions, setEditOptions] = useState('');
     const [editFormula, setEditFormula] = useState('');
+    const [savingEdit, setSavingEdit] = useState(false);
+    const [deletingId, setDeletingId] = useState<number | null>(null);
 
-    const autoKey = (n: string) =>
-        n.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+    const autoKey = (n: string) => n.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
 
     const handleCreate = async (e: React.FormEvent) => {
         e.preventDefault();
+        setSavingCreate(true);
         try {
             await api.post('/admin/pipeline/field-definitions', {
-                name, key,
-                type,
+                name, key, type,
                 options: type === 'list' ? options.split(',').map(o => o.trim()).filter(Boolean) : [],
                 formula: type === 'formula' ? formula : '',
                 sort_order: fieldDefinitions.length + 1,
             });
             setName(''); setKey(''); setType('text'); setOptions(''); setFormula('');
+            toast.success(`Поле «${name}» добавлено`);
             onRefresh();
-        } catch { alert('Поле с таким кодом уже существует'); }
+        } catch { toast.error('Поле с таким кодом уже существует'); }
+        finally { setSavingCreate(false); }
     };
 
     const startEdit = (f: FieldDefinition) => {
-        setEditingId(f.id);
-        setEditName(f.name);
-        setEditOptions(f.options.join(', '));
-        setEditFormula(f.formula);
+        setEditingId(f.id); setEditName(f.name);
+        setEditOptions(f.options.join(', ')); setEditFormula(f.formula);
     };
 
     const saveEdit = async (id: number) => {
-        const field = fieldDefinitions.find(f => f.id === id);
-        await api.patch(`/admin/pipeline/field-definitions/${id}`, {
-            name: editName,
-            options: field?.type === 'list' ? editOptions.split(',').map(o => o.trim()).filter(Boolean) : [],
-            formula: field?.type === 'formula' ? editFormula : '',
-        });
-        setEditingId(null);
-        onRefresh();
+        setSavingEdit(true);
+        try {
+            const field = fieldDefinitions.find(f => f.id === id);
+            await api.patch(`/admin/pipeline/field-definitions/${id}`, {
+                name: editName,
+                options: field?.type === 'list' ? editOptions.split(',').map(o => o.trim()).filter(Boolean) : [],
+                formula: field?.type === 'formula' ? editFormula : '',
+            });
+            setEditingId(null);
+            toast.success('Изменения сохранены');
+            onRefresh();
+        } catch { toast.error('Не удалось сохранить изменения'); }
+        finally { setSavingEdit(false); }
     };
 
-    const handleDelete = async (id: number) => {
+    const handleDelete = async (id: number, fieldName: string) => {
         if (!confirm('Удалить поле? Данные в карточках клиентов сохранятся.')) return;
-        await api.delete(`/admin/pipeline/field-definitions/${id}`);
-        onRefresh();
+        setDeletingId(id);
+        try {
+            await api.delete(`/admin/pipeline/field-definitions/${id}`);
+            toast.success(`Поле «${fieldName}» удалено`);
+            onRefresh();
+        } catch { toast.error('Не удалось удалить поле'); }
+        finally { setDeletingId(null); }
     };
 
-    const getVisibilityMode = (fieldKey: string, stageCode: string): FieldVisibilityMode => {
-        const rule = fieldVisibility.find(v => v.field_key === fieldKey && v.stage_code === stageCode);
-        return rule?.mode ?? 'normal';
-    };
+    const getVisibilityMode = (fieldKey: string, stageCode: string): FieldVisibilityMode =>
+        fieldVisibility.find(v => v.field_key === fieldKey && v.stage_code === stageCode)?.mode ?? 'normal';
 
     const handleVisibilityChange = async (fieldKey: string, stageCode: string, mode: FieldVisibilityMode) => {
         await api.put('/admin/pipeline/field-visibility', { field_key: fieldKey, stage_code: stageCode, mode });
         onRefresh();
     };
 
-    const tabStyle = (t: Tab): React.CSSProperties => ({
-        padding: '7px 16px', border: 'none',
-        borderBottom: tab === t ? '2px solid #7c3aed' : '2px solid transparent',
-        background: 'none', cursor: 'pointer',
-        fontWeight: tab === t ? 600 : 400,
-        color: tab === t ? '#7c3aed' : '#6b7280', fontSize: 13,
-    });
-
     const sortedStages = [...stages].sort((a, b) => a.sort_order - b.sort_order);
+    const si: React.CSSProperties = inp({ fontSize: 12, padding: '6px 9px' });
+
+    const IBtn = ({ onClick, Icon, color, disabled, loading, label }: { onClick: () => void; Icon: React.FC<{ size?: number; strokeWidth?: number; color?: string }>; color?: string; disabled?: boolean; loading?: boolean; label?: string }) => (
+        <button onClick={onClick} disabled={disabled || loading} aria-label={label} title={label}
+            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, border: 'none', borderRadius: 7, cursor: disabled || loading ? 'default' : 'pointer', background: 'rgba(255,255,255,0.06)', transition: 'background 0.15s', opacity: disabled ? 0.3 : 1, flexShrink: 0 }}>
+            {loading ? <Spinner size={12} color={c.text2} /> : <Icon size={13} color={color ?? c.text2} strokeWidth={2} />}
+        </button>
+    );
 
     return (
-        <div style={{ background: '#fff', borderRadius: 8, border: '1px solid #e5e7eb', overflow: 'hidden' }}>
-            <div style={{ display: 'flex', borderBottom: '1px solid #e5e7eb', padding: '0 8px', background: '#faf5ff' }}>
-                <button style={tabStyle('fields')} onClick={() => setTab('fields')}>Конструктор полей</button>
-                <button style={tabStyle('visibility')} onClick={() => setTab('visibility')}>Видимость по этапам</button>
+        <div style={{ background: c.bgCard, border: `1px solid ${c.border}`, borderRadius: 14, overflow: 'hidden' }}>
+            <div style={{ display: 'flex', borderBottom: `1px solid ${c.border}`, background: c.bgElevated, padding: '0 16px' }}>
+                {(['fields', 'visibility'] as Tab[]).map(t => {
+                    const labels: Record<Tab, string> = { fields: 'Конструктор полей', visibility: 'Видимость по этапам' };
+                    return (
+                        <button key={t} onClick={() => setTab(t)} style={{
+                            padding: '10px 16px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13,
+                            fontWeight: tab === t ? 600 : 400,
+                            color: tab === t ? c.text1 : c.text2,
+                            borderBottom: `2px solid ${tab === t ? c.purple : 'transparent'}`,
+                            transition: 'color 0.15s, border-color 0.15s', whiteSpace: 'nowrap',
+                        }}>{labels[t]}</button>
+                    );
+                })}
             </div>
 
             <div style={{ padding: 20 }}>
 
                 {tab === 'fields' && (
                     <div>
-                        <form onSubmit={e => { void handleCreate(e); }} style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                        <form onSubmit={e => { void handleCreate(e); }}
+                            style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap', alignItems: 'flex-end', padding: 14, background: c.bgElevated, borderRadius: 10, border: `1px solid ${c.border}` }}>
                             <div>
-                                <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 3 }}>Название</div>
-                                <input style={{ ...inp, width: 160 }} value={name} onChange={e => { setName(e.target.value); if (!editingId) setKey(autoKey(e.target.value)); }} required />
+                                <div style={{ fontSize: 11, color: c.text2, marginBottom: 4, fontWeight: 600 }}>Название</div>
+                                <input style={{ ...si, width: 150 }} value={name} onChange={e => { setName(e.target.value); setKey(autoKey(e.target.value)); }} required />
                             </div>
                             <div>
-                                <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 3 }}>Ключ (латиница)</div>
-                                <input style={{ ...inp, width: 120 }} value={key} onChange={e => setKey(e.target.value)} placeholder="auto" required />
+                                <div style={{ fontSize: 11, color: c.text2, marginBottom: 4, fontWeight: 600 }}>Ключ</div>
+                                <input style={{ ...si, width: 120 }} value={key} onChange={e => setKey(e.target.value)} placeholder="auto" required />
                             </div>
                             <div>
-                                <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 3 }}>Тип</div>
-                                <select style={{ ...inp, minWidth: 120 }} value={type} onChange={e => setType(e.target.value)}>
+                                <div style={{ fontSize: 11, color: c.text2, marginBottom: 4, fontWeight: 600 }}>Тип</div>
+                                <select style={{ ...si, minWidth: 120 }} value={type} onChange={e => setType(e.target.value)}>
                                     {FIELD_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
                                 </select>
                             </div>
                             {type === 'list' && (
                                 <div>
-                                    <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 3 }}>Варианты (через запятую)</div>
-                                    <input style={{ ...inp, width: 200 }} value={options} onChange={e => setOptions(e.target.value)} placeholder="Вариант 1, Вариант 2" />
+                                    <div style={{ fontSize: 11, color: c.text2, marginBottom: 4, fontWeight: 600 }}>Варианты (через запятую)</div>
+                                    <input style={{ ...si, width: 200 }} value={options} onChange={e => setOptions(e.target.value)} placeholder="Вариант 1, Вариант 2" />
                                 </div>
                             )}
                             {type === 'formula' && (
                                 <div>
-                                    <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 3 }}>Формула (ключи полей)</div>
-                                    <input style={{ ...inp, width: 200 }} value={formula} onChange={e => setFormula(e.target.value)} placeholder="price * count" />
+                                    <div style={{ fontSize: 11, color: c.text2, marginBottom: 4, fontWeight: 600 }}>Формула</div>
+                                    <input style={{ ...si, width: 200 }} value={formula} onChange={e => setFormula(e.target.value)} placeholder="price * count" />
                                 </div>
                             )}
-                            <button type="submit" style={btn('#7c3aed')}>+ Добавить поле</button>
+                            <button type="submit" disabled={savingCreate} aria-busy={savingCreate}
+                                style={{ ...btn(c.purple, { padding: '7px 14px', fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }), opacity: savingCreate ? 0.6 : 1, cursor: savingCreate ? 'default' : 'pointer', alignSelf: 'end' }}>
+                                {savingCreate ? <Spinner size={13} color="#fff" /> : <Plus size={13} strokeWidth={2.5} />} Добавить поле
+                            </button>
                         </form>
 
-                        {fieldDefinitions.length === 0 ? (
-                            <p style={{ color: '#9ca3af', fontSize: 13 }}>Нет настроенных полей</p>
-                        ) : (
-                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                                <thead>
-                                    <tr style={{ background: '#faf5ff', textAlign: 'left' }}>
-                                        <th style={{ padding: '8px 10px' }}>Название</th>
-                                        <th style={{ padding: '8px 10px' }}>Ключ</th>
-                                        <th style={{ padding: '8px 10px' }}>Тип</th>
-                                        <th style={{ padding: '8px 10px' }}>Параметры</th>
-                                        <th style={{ padding: '8px 10px' }}>Действия</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {fieldDefinitions.map(f => (
-                                        <tr key={f.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                                            <td style={{ padding: '8px 10px' }}>
-                                                {editingId === f.id
-                                                    ? <input style={{ ...inp, width: 140 }} value={editName} onChange={e => setEditName(e.target.value)} />
-                                                    : <strong>{f.name}</strong>
-                                                }
-                                            </td>
-                                            <td style={{ padding: '8px 10px' }}>
-                                                <code style={{ background: '#f3f4f6', padding: '2px 5px', borderRadius: 3 }}>{f.key}</code>
-                                            </td>
-                                            <td style={{ padding: '8px 10px' }}>
-                                                <span style={{ background: '#ede9fe', color: '#7c3aed', padding: '2px 7px', borderRadius: 3, fontSize: 11, fontWeight: 600 }}>
-                                                    {FIELD_TYPES.find(t => t.value === f.type)?.label ?? f.type}
-                                                </span>
-                                            </td>
-                                            <td style={{ padding: '8px 10px', color: '#6b7280', fontSize: 12 }}>
-                                                {editingId === f.id ? (
-                                                    f.type === 'list'
-                                                        ? <input style={{ ...inp, width: 180 }} value={editOptions} onChange={e => setEditOptions(e.target.value)} placeholder="Вариант 1, Вариант 2" />
-                                                        : f.type === 'formula'
-                                                            ? <input style={{ ...inp, width: 180 }} value={editFormula} onChange={e => setEditFormula(e.target.value)} placeholder="price * count" />
-                                                            : <span style={{ color: '#9ca3af' }}>—</span>
-                                                ) : (
-                                                    f.type === 'list' ? f.options.join(', ') || '—'
-                                                        : f.type === 'formula' ? <code>{f.formula || '—'}</code>
-                                                            : '—'
-                                                )}
-                                            </td>
-                                            <td style={{ padding: '8px 10px' }}>
-                                                {editingId === f.id ? (
-                                                    <div style={{ display: 'flex', gap: 4 }}>
-                                                        <button onClick={() => void saveEdit(f.id)} style={btn('#10b981')}>Сохранить</button>
-                                                        <button onClick={() => setEditingId(null)} style={btn('#6b7280')}>Отмена</button>
-                                                    </div>
-                                                ) : (
-                                                    <div style={{ display: 'flex', gap: 4 }}>
-                                                        <button onClick={() => startEdit(f)} style={btn('#f59e0b')}>Изменить</button>
-                                                        <button onClick={() => void handleDelete(f.id)} style={btn('#ef4444')}>Удалить</button>
-                                                    </div>
-                                                )}
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        )}
+                        {fieldDefinitions.length === 0
+                            ? (
+                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '36px 20px', gap: 10, textAlign: 'center' }}>
+                                    <LayoutGrid size={28} color={c.text3} strokeWidth={1.5} />
+                                    <p style={{ margin: 0, fontWeight: 600, fontSize: 14, color: c.text2 }}>Нет настроенных полей</p>
+                                    <p style={{ margin: 0, fontSize: 12, color: c.text3 }}>Создайте первое поле карточки с помощью формы выше</p>
+                                </div>
+                            )
+                            : (
+                                <div style={{ overflowX: 'auto', borderRadius: 10, border: `1px solid ${c.border}` }}>
+                                    <table style={{ minWidth: 580, width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                                        <thead>
+                                            <tr>
+                                                {['Название', 'Ключ', 'Тип', 'Параметры', ''].map(h => (
+                                                    <th key={h} style={{ padding: '8px 12px', textAlign: 'left', color: c.text2, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em', background: 'rgba(255,255,255,0.03)', whiteSpace: 'nowrap' }}>{h}</th>
+                                                ))}
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {fieldDefinitions.map(f => (
+                                                <tr key={f.id} style={{ borderTop: `1px solid ${c.border}` }}>
+                                                    <td style={{ padding: '8px 12px', color: c.text1, fontWeight: 500 }}>
+                                                        {editingId === f.id
+                                                            ? <input style={{ ...si, width: 130 }} value={editName} onChange={e => setEditName(e.target.value)} />
+                                                            : f.name}
+                                                    </td>
+                                                    <td style={{ padding: '8px 12px' }}>
+                                                        <code style={{ background: 'rgba(255,255,255,0.06)', color: c.text2, padding: '2px 6px', borderRadius: 4, fontSize: 11 }}>{f.key}</code>
+                                                    </td>
+                                                    <td style={{ padding: '8px 12px' }}>
+                                                        <span style={{ background: 'rgba(139,92,246,0.15)', color: c.purple, padding: '2px 7px', borderRadius: 6, fontSize: 11, fontWeight: 600 }}>
+                                                            {FIELD_TYPES.find(t => t.value === f.type)?.label ?? f.type}
+                                                        </span>
+                                                    </td>
+                                                    <td style={{ padding: '8px 12px', color: c.text2, fontSize: 12 }}>
+                                                        {editingId === f.id ? (
+                                                            f.type === 'list'
+                                                                ? <input style={{ ...si, width: 180 }} value={editOptions} onChange={e => setEditOptions(e.target.value)} />
+                                                                : f.type === 'formula'
+                                                                    ? <input style={{ ...si, width: 180 }} value={editFormula} onChange={e => setEditFormula(e.target.value)} />
+                                                                    : <span style={{ color: c.text3 }}>—</span>
+                                                        ) : (
+                                                            f.type === 'list' ? (f.options.join(', ') || '—')
+                                                                : f.type === 'formula' ? <code style={{ color: c.text2 }}>{f.formula || '—'}</code>
+                                                                    : '—'
+                                                        )}
+                                                    </td>
+                                                    <td style={{ padding: '8px 12px' }}>
+                                                        {editingId === f.id ? (
+                                                            <div style={{ display: 'flex', gap: 4 }}>
+                                                                <IBtn onClick={() => void saveEdit(f.id)} Icon={Check} color={c.green} loading={savingEdit} label="Сохранить" />
+                                                                <IBtn onClick={() => setEditingId(null)} Icon={X} disabled={savingEdit} label="Отмена" />
+                                                            </div>
+                                                        ) : (
+                                                            <div style={{ display: 'flex', gap: 4 }}>
+                                                                <IBtn onClick={() => startEdit(f)} Icon={Pencil} color={c.amber} label={`Редактировать ${f.name}`} />
+                                                                <IBtn onClick={() => void handleDelete(f.id, f.name)} Icon={Trash2} color={c.red} loading={deletingId === f.id} label={`Удалить ${f.name}`} />
+                                                            </div>
+                                                        )}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
                     </div>
                 )}
 
                 {tab === 'visibility' && (
                     <div>
-                        <p style={{ color: '#6b7280', fontSize: 13, marginTop: 0 }}>
-                            Настройте как поле отображается на каждом этапе воронки. «Обязательное» блокирует переход на этап без заполнения поля.
+                        <p style={{ color: c.text2, fontSize: 13, marginTop: 0, marginBottom: 16 }}>
+                            «Обязательное» блокирует переход на этап без заполнения поля.
                         </p>
-                        {fieldDefinitions.length === 0 ? (
-                            <p style={{ color: '#9ca3af', fontSize: 13 }}>Сначала создайте поля на вкладке «Конструктор полей»</p>
-                        ) : (
-                            <div style={{ overflowX: 'auto' }}>
-                                <table style={{ borderCollapse: 'collapse', fontSize: 12, minWidth: 600 }}>
-                                    <thead>
-                                        <tr style={{ background: '#faf5ff' }}>
-                                            <th style={{ padding: '8px 12px', textAlign: 'left', borderBottom: '2px solid #e5e7eb', minWidth: 160 }}>Поле</th>
-                                            {sortedStages.map(s => (
-                                                <th key={s.id} style={{ padding: '8px 10px', textAlign: 'center', borderBottom: '2px solid #e5e7eb', minWidth: 120 }}>
-                                                    <div style={{ width: 8, height: 8, background: s.color, borderRadius: '50%', display: 'inline-block', marginRight: 4 }} />
-                                                    {s.name}
-                                                </th>
-                                            ))}
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {fieldDefinitions.map(f => (
-                                            <tr key={f.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                                                <td style={{ padding: '8px 12px' }}>
-                                                    <div style={{ fontWeight: 600 }}>{f.name}</div>
-                                                    <div style={{ color: '#9ca3af', fontSize: 11 }}>{f.key}</div>
-                                                </td>
-                                                {sortedStages.map(s => {
-                                                    const mode = getVisibilityMode(f.key, s.code);
-                                                    const opt = VISIBILITY_OPTIONS.find(o => o.value === mode)!;
-                                                    return (
-                                                        <td key={s.id} style={{ padding: '6px 10px', textAlign: 'center' }}>
-                                                            <select
-                                                                value={mode}
-                                                                onChange={e => void handleVisibilityChange(f.key, s.code, e.target.value as FieldVisibilityMode)}
-                                                                style={{
-                                                                    fontSize: 11, padding: '3px 6px', borderRadius: 4,
-                                                                    border: `1px solid ${opt.color}`,
-                                                                    color: opt.color, background: '#fff', cursor: 'pointer',
-                                                                }}
-                                                            >
-                                                                {VISIBILITY_OPTIONS.map(o => (
-                                                                    <option key={o.value} value={o.value}>{o.label}</option>
-                                                                ))}
-                                                            </select>
-                                                        </td>
-                                                    );
-                                                })}
+                        {fieldDefinitions.length === 0
+                            ? <p style={{ color: c.text3, fontSize: 13 }}>Сначала создайте поля на вкладке «Конструктор полей»</p>
+                            : (
+                                <div style={{ overflowX: 'auto', borderRadius: 10, border: `1px solid ${c.border}` }}>
+                                    <table style={{ borderCollapse: 'collapse', fontSize: 12, minWidth: 500, width: '100%' }}>
+                                        <thead>
+                                            <tr style={{ background: 'rgba(255,255,255,0.03)' }}>
+                                                <th style={{ padding: '10px 14px', textAlign: 'left', color: c.text2, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em', minWidth: 160, borderBottom: `1px solid ${c.border}`, whiteSpace: 'nowrap' }}>Поле</th>
+                                                {sortedStages.map(s => (
+                                                    <th key={s.id} style={{ padding: '10px 12px', textAlign: 'center', borderBottom: `1px solid ${c.border}`, minWidth: 120 }}>
+                                                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                                                            <div style={{ width: 8, height: 8, background: s.color, borderRadius: '50%', boxShadow: `0 0 6px ${s.color}80` }} />
+                                                            <span style={{ fontSize: 11, color: c.text2, fontWeight: 600 }}>{s.name}</span>
+                                                        </div>
+                                                    </th>
+                                                ))}
                                             </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        )}
+                                        </thead>
+                                        <tbody>
+                                            {fieldDefinitions.map(f => (
+                                                <tr key={f.id} style={{ borderTop: `1px solid ${c.border}` }}>
+                                                    <td style={{ padding: '8px 14px' }}>
+                                                        <div style={{ fontWeight: 600, color: c.text1 }}>{f.name}</div>
+                                                        <div style={{ color: c.text3, fontSize: 11 }}>{f.key}</div>
+                                                    </td>
+                                                    {sortedStages.map(s => {
+                                                        const mode = getVisibilityMode(f.key, s.code);
+                                                        const opt = VISIBILITY_OPTIONS.find(o => o.value === mode)!;
+                                                        return (
+                                                            <td key={s.id} style={{ padding: '6px 10px', textAlign: 'center' }}>
+                                                                <select
+                                                                    value={mode}
+                                                                    onChange={e => void handleVisibilityChange(f.key, s.code, e.target.value as FieldVisibilityMode)}
+                                                                    style={{ fontSize: 11, padding: '3px 7px', borderRadius: 6, cursor: 'pointer', border: `1px solid ${opt.color}40`, color: opt.color, background: opt.bg }}
+                                                                >
+                                                                    {VISIBILITY_OPTIONS.map(o => (
+                                                                        <option key={o.value} value={o.value}>{o.label}</option>
+                                                                    ))}
+                                                                </select>
+                                                            </td>
+                                                        );
+                                                    })}
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
                     </div>
                 )}
             </div>
