@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"strings"
 
 	"crmProject/internal/db"
@@ -97,11 +98,10 @@ func UpdateClientStatus(c *gin.Context) {
 		return
 	}
 
-	// Get current client status
 	var currentStatus string
 	_ = db.DB.QueryRow("SELECT status FROM clients WHERE id = ?", clientID).Scan(&currentStatus)
 
-	// Check transition rule: is this move blocked?
+	// Check if transition is blocked
 	var blockedCount int
 	_ = db.DB.QueryRow("SELECT COUNT(*) FROM stage_transition_rules WHERE from_stage_code = ? AND to_stage_code = ?",
 		currentStatus, input.Status).Scan(&blockedCount)
@@ -110,7 +110,7 @@ func UpdateClientStatus(c *gin.Context) {
 		return
 	}
 
-	// Check WIP limit of target stage
+	// Check WIP limit
 	var wipLimit int
 	_ = db.DB.QueryRow("SELECT wip_limit FROM pipeline_stages WHERE code = ?", input.Status).Scan(&wipLimit)
 	if wipLimit > 0 {
@@ -124,7 +124,7 @@ func UpdateClientStatus(c *gin.Context) {
 		}
 	}
 
-	// Load existing client custom_fields and merge with provided values
+	// Load and merge custom_fields
 	var customFieldsJSON string
 	_ = db.DB.QueryRow("SELECT COALESCE(custom_fields, '{}') FROM clients WHERE id = ?", clientID).Scan(&customFieldsJSON)
 	existingFields := make(map[string]string)
@@ -133,39 +133,60 @@ func UpdateClientStatus(c *gin.Context) {
 		existingFields[k] = v
 	}
 
-	// Check required fields for target stage
-	rows, err := db.DB.Query("SELECT field_name, field_label FROM stage_required_fields WHERE stage_code = ?", input.Status)
-	if err == nil {
+	// Collect required fields from both systems
+	type ReqField struct {
+		Name  string `json:"field_name"`
+		Label string `json:"field_label"`
+	}
+	var missing []ReqField
+
+	if rows, err1 := db.DB.Query("SELECT field_name, field_label FROM stage_required_fields WHERE stage_code = ?", input.Status); err1 == nil {
 		defer rows.Close()
-		type ReqField struct {
-			Name  string `json:"field_name"`
-			Label string `json:"field_label"`
-		}
-		var missing []ReqField
 		for rows.Next() {
-			var fieldName, fieldLabel string
-			if rows.Scan(&fieldName, &fieldLabel) == nil {
-				if val := existingFields[fieldName]; strings.TrimSpace(val) == "" {
-					missing = append(missing, ReqField{Name: fieldName, Label: fieldLabel})
-				}
+			var fn, fl string
+			if rows.Scan(&fn, &fl) == nil && strings.TrimSpace(existingFields[fn]) == "" {
+				missing = append(missing, ReqField{Name: fn, Label: fl})
 			}
-		}
-		if len(missing) > 0 {
-			c.JSON(http.StatusUnprocessableEntity, gin.H{
-				"error":           "Необходимо заполнить обязательные поля",
-				"required_fields": missing,
-			})
-			return
 		}
 	}
 
-	// Persist merged custom_fields if any were provided
+	if fvRows, err2 := db.DB.Query(`
+		SELECT fv.field_key, fd.name
+		FROM field_stage_visibility fv
+		JOIN field_definitions fd ON fv.field_key = fd.key
+		WHERE fv.stage_code = ? AND fv.mode = 'required'`, input.Status); err2 == nil {
+		defer fvRows.Close()
+		for fvRows.Next() {
+			var fk, fn string
+			if fvRows.Scan(&fk, &fn) == nil && strings.TrimSpace(existingFields[fk]) == "" {
+				dup := false
+				for _, m := range missing {
+					if m.Name == fk {
+						dup = true
+						break
+					}
+				}
+				if !dup {
+					missing = append(missing, ReqField{Name: fk, Label: fn})
+				}
+			}
+		}
+	}
+
+	if len(missing) > 0 {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"error":           "Необходимо заполнить обязательные поля",
+			"required_fields": missing,
+		})
+		return
+	}
+
 	if len(input.CustomFields) > 0 {
 		merged, _ := json.Marshal(existingFields)
 		_, _ = db.DB.Exec("UPDATE clients SET custom_fields = ? WHERE id = ?", string(merged), clientID)
 	}
 
-	_, err = db.DB.Exec("UPDATE clients SET status = ?, loss_reason = ? WHERE id = ?",
+	_, err := db.DB.Exec("UPDATE clients SET status = ?, loss_reason = ? WHERE id = ?",
 		input.Status, input.LossReason, clientID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update status"})
@@ -180,6 +201,67 @@ func UpdateClientStatus(c *gin.Context) {
 	db.LogAction(userIDRaw.(uint), "UPDATE_CLIENT_STATUS", details)
 
 	c.JSON(http.StatusOK, gin.H{"message": "Status updated"})
+}
+
+func UpdateClientFields(c *gin.Context) {
+	clientID := c.Param("id")
+	var input struct {
+		CustomFields map[string]string `json:"custom_fields" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var customFieldsJSON string
+	_ = db.DB.QueryRow("SELECT COALESCE(custom_fields, '{}') FROM clients WHERE id = ?", clientID).Scan(&customFieldsJSON)
+	existing := make(map[string]string)
+	_ = json.Unmarshal([]byte(customFieldsJSON), &existing)
+	for k, v := range input.CustomFields {
+		existing[k] = v
+	}
+
+	merged, _ := json.Marshal(existing)
+	_, err := db.DB.Exec("UPDATE clients SET custom_fields = ? WHERE id = ?", string(merged), clientID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update fields"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"custom_fields": existing})
+}
+
+func UploadClientFile(c *gin.Context) {
+	clientID := c.Param("id")
+	fieldKey := c.PostForm("field_key")
+	if fieldKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "field_key is required"})
+		return
+	}
+
+	file, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "file is required"})
+		return
+	}
+
+	ext := filepath.Ext(file.Filename)
+	filename := fmt.Sprintf("client_%s_%s%s", clientID, fieldKey, ext)
+	if err := c.SaveUploadedFile(file, "./uploads/"+filename); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save file"})
+		return
+	}
+
+	url := "http://localhost:8080/uploads/" + filename
+
+	var customFieldsJSON string
+	_ = db.DB.QueryRow("SELECT COALESCE(custom_fields, '{}') FROM clients WHERE id = ?", clientID).Scan(&customFieldsJSON)
+	existing := make(map[string]string)
+	_ = json.Unmarshal([]byte(customFieldsJSON), &existing)
+	existing[fieldKey] = url
+	merged, _ := json.Marshal(existing)
+	_, _ = db.DB.Exec("UPDATE clients SET custom_fields = ? WHERE id = ?", string(merged), clientID)
+
+	c.JSON(http.StatusOK, gin.H{"url": url})
 }
 
 func GetLossReasons(c *gin.Context) {

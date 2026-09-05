@@ -57,6 +57,50 @@ export interface LossReason {
     name: string;
 }
 
+export interface FieldDefinition {
+    id: number;
+    name: string;
+    key: string;
+    type: 'text' | 'number' | 'list' | 'date' | 'file' | 'formula';
+    options: string[];
+    formula: string;
+    sort_order: number;
+}
+
+export type FieldVisibilityMode = 'normal' | 'required' | 'hidden';
+
+export interface FieldStageVisibility {
+    id: number;
+    field_key: string;
+    stage_code: string;
+    mode: FieldVisibilityMode;
+}
+
+export interface Contact {
+    id: number;
+    name: string;
+    phone: string;
+    email: string;
+    company_id?: number;
+    company_name?: string;
+    created_at: string;
+}
+
+export interface Company {
+    id: number;
+    name: string;
+    inn: string;
+    phone: string;
+    email: string;
+    website: string;
+    created_at: string;
+}
+
+export interface ClientCounterparties {
+    contacts: Contact[];
+    companies: Company[];
+}
+
 export interface TransitionRule {
     id: number;
     from_stage_code: string;

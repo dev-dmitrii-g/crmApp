@@ -4,7 +4,9 @@ import (
 	"context"
 	"crmProject/internal/admin"
 	"crmProject/internal/chat"
+	"crmProject/internal/contacts"
 	"crmProject/internal/crm"
+	"crmProject/internal/fields"
 	"crmProject/internal/pipeline"
 	"crmProject/internal/whatsapp"
 	"log"
@@ -61,16 +63,41 @@ func main() {
 			c.JSON(http.StatusOK, gin.H{"user_id": userID, "email": email})
 		})
 
+		// Clients
 		api.GET("/clients", crm.GetClients)
 		api.POST("/clients", crm.CreateClient)
 		api.PATCH("/clients/:id/status", crm.UpdateClientStatus)
+		api.PATCH("/clients/:id/fields", crm.UpdateClientFields)
+		api.POST("/clients/:id/upload", crm.UploadClientFile)
 
+		// Client counterparties
+		api.GET("/clients/:id/counterparties", contacts.GetClientCounterparties)
+		api.POST("/clients/:id/contacts", contacts.LinkContactToClient)
+		api.DELETE("/clients/:id/contacts/:contactId", contacts.UnlinkContactFromClient)
+		api.POST("/clients/:id/companies", contacts.LinkCompanyToClient)
+		api.DELETE("/clients/:id/companies/:companyId", contacts.UnlinkCompanyFromClient)
+
+		// Contacts & Companies (all managers)
+		api.GET("/contacts", contacts.GetContacts)
+		api.POST("/contacts", contacts.CreateContact)
+		api.PATCH("/contacts/:id", contacts.UpdateContact)
+		api.DELETE("/contacts/:id", contacts.DeleteContact)
+
+		api.GET("/companies", contacts.GetCompanies)
+		api.POST("/companies", contacts.CreateCompany)
+		api.PATCH("/companies/:id", contacts.UpdateCompany)
+		api.DELETE("/companies/:id", contacts.DeleteCompany)
+
+		// Messages
 		api.GET("/messages", chat.GetMessages)
 		api.POST("/messages/send", chat.SendMessage)
 
+		// Pipeline (read-only for all)
 		api.GET("/pipeline/stages", auth.JWTAuthMiddleware(), pipeline.GetStages)
 		api.GET("/pipeline/transition-rules", auth.JWTAuthMiddleware(), pipeline.GetTransitionRules)
 		api.GET("/pipeline/stage-fields", auth.JWTAuthMiddleware(), pipeline.GetStageRequiredFields)
+		api.GET("/pipeline/field-definitions", auth.JWTAuthMiddleware(), fields.GetFieldDefinitions)
+		api.GET("/pipeline/field-visibility", auth.JWTAuthMiddleware(), fields.GetFieldVisibility)
 
 		api.GET("/crm/loss-reasons", crm.GetLossReasons)
 
@@ -91,6 +118,11 @@ func main() {
 
 			adminGroup.POST("/pipeline/stage-fields", pipeline.CreateStageRequiredField)
 			adminGroup.DELETE("/pipeline/stage-fields/:id", pipeline.DeleteStageRequiredField)
+
+			adminGroup.POST("/pipeline/field-definitions", fields.CreateFieldDefinition)
+			adminGroup.PATCH("/pipeline/field-definitions/:id", fields.UpdateFieldDefinition)
+			adminGroup.DELETE("/pipeline/field-definitions/:id", fields.DeleteFieldDefinition)
+			adminGroup.PUT("/pipeline/field-visibility", fields.SetFieldVisibility)
 
 			adminGroup.POST("/crm/loss-reasons", crm.CreateLossReason)
 			adminGroup.DELETE("/crm/loss-reasons/:id", crm.DeleteLossReason)

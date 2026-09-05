@@ -1,8 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import api from './services/api';
-import type { Client, Stage, Manager, Analytics, Message, TransitionRule, StageRequiredField, LossReason } from './types';
+import type { Client, Stage, Manager, Analytics, Message, TransitionRule, StageRequiredField, LossReason, FieldDefinition, FieldStageVisibility } from './types';
 import { KanbanBoard } from './components/kanban/KanbanBoard';
 import { StageManager } from './components/admin/StageManager';
+import { FieldConstructor } from './components/admin/FieldConstructor';
+import { ClientCard } from './components/crm/ClientCard';
+import { ContactsCompanies } from './components/crm/ContactsCompanies';
 import { QRCodeSVG } from 'qrcode.react';
 
 export default function App() {
@@ -11,13 +14,16 @@ export default function App() {
   const [password, setPassword] = useState<string>('password123');
   const [userRole, setUserRole] = useState<string>(localStorage.getItem('role') || 'manager');
 
-  const [activeTab, setActiveTab] = useState<'kanban' | 'admin'>('kanban');
+  const [activeTab, setActiveTab] = useState<'kanban' | 'counterparties' | 'admin'>('kanban');
 
   const [stages, setStages] = useState<Stage[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [transitionRules, setTransitionRules] = useState<TransitionRule[]>([]);
   const [stageRequiredFields, setStageRequiredFields] = useState<StageRequiredField[]>([]);
   const [lossReasons, setLossReasons] = useState<LossReason[]>([]);
+  const [fieldDefinitions, setFieldDefinitions] = useState<FieldDefinition[]>([]);
+  const [fieldVisibility, setFieldVisibility] = useState<FieldStageVisibility[]>([]);
+  const [cardClient, setCardClient] = useState<Client | null>(null);
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState<string>('');
@@ -69,16 +75,20 @@ export default function App() {
 
   const fetchStages = async () => {
     try {
-      const [stagesRes, rulesRes, fieldsRes, reasonsRes] = await Promise.all([
+      const [stagesRes, rulesRes, stageFieldsRes, reasonsRes, fieldDefsRes, fieldVisRes] = await Promise.all([
         api.get<Stage[]>('/pipeline/stages'),
         api.get<TransitionRule[]>('/pipeline/transition-rules'),
         api.get<StageRequiredField[]>('/pipeline/stage-fields'),
         api.get<LossReason[]>('/crm/loss-reasons'),
+        api.get<FieldDefinition[]>('/pipeline/field-definitions'),
+        api.get<FieldStageVisibility[]>('/pipeline/field-visibility'),
       ]);
       setStages(stagesRes.data || []);
       setTransitionRules(rulesRes.data || []);
-      setStageRequiredFields(fieldsRes.data || []);
+      setStageRequiredFields(stageFieldsRes.data || []);
       setLossReasons(reasonsRes.data || []);
+      setFieldDefinitions(fieldDefsRes.data || []);
+      setFieldVisibility(fieldVisRes.data || []);
     } catch (err) {
       console.error('Failed to fetch stages', err);
     }
@@ -245,6 +255,7 @@ export default function App() {
             <h2 style={{ margin: 0 }}>WhatsApp CRM</h2>
             <nav style={{ display: 'flex', gap: 10 }}>
               <button onClick={() => setActiveTab('kanban')} style={{ padding: '8px 16px', borderRadius: 6, border: 'none', background: activeTab === 'kanban' ? '#3b82f6' : '#e5e7eb', color: activeTab === 'kanban' ? '#fff' : '#000', cursor: 'pointer' }}>Канбан</button>
+              <button onClick={() => setActiveTab('counterparties')} style={{ padding: '8px 16px', borderRadius: 6, border: 'none', background: activeTab === 'counterparties' ? '#10b981' : '#e5e7eb', color: activeTab === 'counterparties' ? '#fff' : '#000', cursor: 'pointer' }}>Контрагенты</button>
               {userRole === 'admin' && (
                   <button onClick={() => setActiveTab('admin')} style={{ padding: '8px 16px', borderRadius: 6, border: 'none', background: activeTab === 'admin' ? '#3b82f6' : '#e5e7eb', color: activeTab === 'admin' ? '#fff' : '#000', cursor: 'pointer' }}>Админка & Аналитика</button>
               )}
@@ -264,12 +275,26 @@ export default function App() {
             stageRequiredFields={stageRequiredFields}
             lossReasons={lossReasons}
             onOpenChat={(c) => { void openChat(c); }}
+            onOpenCard={(c) => setCardClient(c)}
             onUpdateStatus={(id, s, r, cf) => { void updateStatus(id, s, r, cf); }}
         />}
+
+        {activeTab === 'counterparties' && (
+            <div style={{ background: '#fff', borderRadius: 8, border: '1px solid #e5e7eb', padding: '0 20px 20px' }}>
+                <h3 style={{ marginTop: 20 }}>База контрагентов</h3>
+                <ContactsCompanies />
+            </div>
+        )}
 
         {activeTab === 'admin' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 30 }}>
               <StageManager stages={stages} onRefresh={() => { void fetchStages(); }} />
+              <FieldConstructor
+                  stages={stages}
+                  fieldDefinitions={fieldDefinitions}
+                  fieldVisibility={fieldVisibility}
+                  onRefresh={() => { void fetchStages(); }}
+              />
 
               {analytics && (
                   <div>
@@ -381,6 +406,17 @@ export default function App() {
                 </div>
               </form>
             </div>
+        )}
+
+        {cardClient && (
+            <ClientCard
+                client={cardClient}
+                stages={stages}
+                fieldDefinitions={fieldDefinitions}
+                fieldVisibility={fieldVisibility}
+                onClose={() => setCardClient(null)}
+                onRefresh={() => { void fetchClients(); }}
+            />
         )}
 
         {showQR && (

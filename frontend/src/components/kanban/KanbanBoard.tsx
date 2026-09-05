@@ -8,6 +8,7 @@ interface Props {
     stageRequiredFields: StageRequiredField[];
     lossReasons: LossReason[];
     onOpenChat: (client: Client) => void;
+    onOpenCard: (client: Client) => void;
     onUpdateStatus: (id: number, status: string, lossReason?: string, customFields?: Record<string, string>) => void;
 }
 
@@ -25,7 +26,7 @@ interface RequiredFieldsModal {
 
 export const KanbanBoard: React.FC<Props> = ({
     stages, clients, transitionRules, stageRequiredFields, lossReasons,
-    onOpenChat, onUpdateStatus,
+    onOpenChat, onOpenCard, onUpdateStatus,
 }) => {
     const [rejectModal, setRejectModal] = useState<RejectModal | null>(null);
     const [rejectReason, setRejectReason] = useState('');
@@ -134,10 +135,15 @@ export const KanbanBoard: React.FC<Props> = ({
                         {stageClients.map(client => (
                             <div
                                 key={client.id}
-                                onClick={() => onOpenChat(client)}
-                                style={{ background: '#fff', padding: 11, margin: '8px 0', borderRadius: 6, cursor: 'pointer', boxShadow: '0 1px 3px rgba(0,0,0,0.08)' }}
+                                style={{ background: '#fff', padding: 11, margin: '8px 0', borderRadius: 6, boxShadow: '0 1px 3px rgba(0,0,0,0.08)' }}
                             >
-                                <strong style={{ fontSize: 13 }}>{client.name}</strong>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                                    <strong style={{ fontSize: 13, cursor: 'pointer' }} onClick={() => onOpenChat(client)}>{client.name}</strong>
+                                    <button onClick={() => onOpenCard(client)} title="Открыть карточку"
+                                        style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, color: '#6b7280', padding: '0 2px', lineHeight: 1 }}>
+                                        📋
+                                    </button>
+                                </div>
                                 <p style={{ margin: '4px 0 0', color: '#6b7280', fontSize: 12 }}>{client.phone}</p>
                                 {client.loss_reason && (
                                     <p style={{ margin: '4px 0 0', color: '#ef4444', fontSize: 11 }}>Причина: {client.loss_reason}</p>

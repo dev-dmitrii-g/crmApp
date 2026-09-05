@@ -66,6 +66,61 @@ CREATE TABLE IF NOT EXISTS loss_reasons (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS companies (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    inn TEXT DEFAULT '',
+    phone TEXT DEFAULT '',
+    email TEXT DEFAULT '',
+    website TEXT DEFAULT '',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS contacts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    phone TEXT DEFAULT '',
+    email TEXT DEFAULT '',
+    company_id INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS client_contacts (
+    client_id INTEGER NOT NULL,
+    contact_id INTEGER NOT NULL,
+    PRIMARY KEY(client_id, contact_id),
+    FOREIGN KEY(client_id) REFERENCES clients(id) ON DELETE CASCADE,
+    FOREIGN KEY(contact_id) REFERENCES contacts(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS client_companies (
+    client_id INTEGER NOT NULL,
+    company_id INTEGER NOT NULL,
+    PRIMARY KEY(client_id, company_id),
+    FOREIGN KEY(client_id) REFERENCES clients(id) ON DELETE CASCADE,
+    FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS field_definitions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    key TEXT UNIQUE NOT NULL,
+    type TEXT NOT NULL DEFAULT 'text',
+    options TEXT DEFAULT '[]',
+    formula TEXT DEFAULT '',
+    sort_order INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS field_stage_visibility (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    field_key TEXT NOT NULL,
+    stage_code TEXT NOT NULL,
+    mode TEXT NOT NULL DEFAULT 'normal',
+    UNIQUE(field_key, stage_code)
+);
+
 CREATE TABLE IF NOT EXISTS stage_transition_rules (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     from_stage_code TEXT NOT NULL,
