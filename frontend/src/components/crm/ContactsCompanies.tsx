@@ -1,268 +1,380 @@
 import React, { useState, useEffect } from 'react';
+import { Pencil, Trash2, Check, X, Plus, ExternalLink, Users } from 'lucide-react';
 import api from '../../services/api';
+import { useToast } from '../../hooks/useToast';
+import { Spinner } from '../ui/Spinner';
+import { Skeleton } from '../ui/Skeleton';
 import type { Contact, Company } from '../../types';
+import { c, inp, btn } from '../../theme';
 
 type TabType = 'contacts' | 'companies';
 
-const inp: React.CSSProperties = { padding: '7px 9px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 13 };
-const btn = (bg: string, color = '#fff'): React.CSSProperties => ({
-    padding: '6px 12px', background: bg, color, border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 13,
-});
+const IBtn = ({
+    onClick, Icon, color, title, disabled, loading,
+}: {
+    onClick: () => void;
+    Icon: React.FC<{ size?: number; strokeWidth?: number; color?: string }>;
+    color?: string;
+    title?: string;
+    disabled?: boolean;
+    loading?: boolean;
+}) => (
+    <button
+        onClick={onClick}
+        title={title}
+        disabled={disabled || loading}
+        style={{
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            width: 32, height: 32, border: 'none', borderRadius: 7,
+            cursor: disabled || loading ? 'default' : 'pointer',
+            background: 'rgba(255,255,255,0.06)',
+            transition: 'background 0.15s',
+            opacity: disabled ? 0.3 : 1,
+            flexShrink: 0,
+        }}
+    >
+        {loading ? <Spinner size={12} color={c.text2} /> : <Icon size={13} color={color ?? c.text2} strokeWidth={2} />}
+    </button>
+);
 
 export const ContactsCompanies: React.FC = () => {
+    const toast = useToast();
     const [tab, setTab] = useState<TabType>('contacts');
     const [contacts, setContacts] = useState<Contact[]>([]);
     const [companies, setCompanies] = useState<Company[]>([]);
     const [search, setSearch] = useState('');
+    const [loadingData, setLoadingData] = useState(true);
     const [editingId, setEditingId] = useState<number | null>(null);
+    const [editValues, setEditValues] = useState<Record<string, string>>({});
+    const [savingEdit, setSavingEdit] = useState(false);
+    const [deletingId, setDeletingId] = useState<number | null>(null);
 
-    // Contact form
     const [ctName, setCtName] = useState('');
     const [ctPhone, setCtPhone] = useState('');
     const [ctEmail, setCtEmail] = useState('');
     const [ctCompanyId, setCtCompanyId] = useState('');
+    const [savingContact, setSavingContact] = useState(false);
 
-    // Company form
     const [coName, setCoName] = useState('');
     const [coInn, setCoInn] = useState('');
     const [coPhone, setCoPhone] = useState('');
     const [coEmail, setCoEmail] = useState('');
     const [coWebsite, setCoWebsite] = useState('');
+    const [savingCompany, setSavingCompany] = useState(false);
 
-    // Edit state
-    const [editValues, setEditValues] = useState<Record<string, string>>({});
-
-    useEffect(() => {
-        void load();
-    }, [tab]);
+    useEffect(() => { void load(); }, [tab]);
 
     const load = async () => {
-        if (tab === 'contacts') {
-            const res = await api.get<Contact[]>('/contacts');
-            setContacts(res.data || []);
-        } else {
-            const res = await api.get<Company[]>('/companies');
-            setCompanies(res.data || []);
-        }
+        setLoadingData(true);
+        try {
+            if (tab === 'contacts') {
+                const [ctRes, coRes] = await Promise.all([
+                    api.get<Contact[]>('/contacts'),
+                    api.get<Company[]>('/companies'),
+                ]);
+                setContacts(ctRes.data || []);
+                setCompanies(coRes.data || []);
+            } else {
+                const res = await api.get<Company[]>('/companies');
+                setCompanies(res.data || []);
+            }
+        } catch { toast.error('Не удалось загрузить данные'); }
+        finally { setLoadingData(false); }
     };
 
-    // === Contacts ===
     const createContact = async (e: React.FormEvent) => {
         e.preventDefault();
-        await api.post('/contacts', {
-            name: ctName, phone: ctPhone, email: ctEmail,
-            company_id: ctCompanyId ? Number(ctCompanyId) : null,
-        });
-        setCtName(''); setCtPhone(''); setCtEmail(''); setCtCompanyId('');
-        await load();
+        setSavingContact(true);
+        try {
+            await api.post('/contacts', { name: ctName, phone: ctPhone, email: ctEmail, company_id: ctCompanyId ? Number(ctCompanyId) : null });
+            toast.success(`Контакт «${ctName}» добавлен`);
+            setCtName(''); setCtPhone(''); setCtEmail(''); setCtCompanyId('');
+            await load();
+        } catch { toast.error('Не удалось создать контакт'); }
+        finally { setSavingContact(false); }
     };
 
-    const deleteContact = async (id: number) => {
-        if (!confirm('Удалить контакт?')) return;
-        await api.delete(`/contacts/${id}`);
-        await load();
-    };
-
-    // === Companies ===
     const createCompany = async (e: React.FormEvent) => {
         e.preventDefault();
-        await api.post('/companies', { name: coName, inn: coInn, phone: coPhone, email: coEmail, website: coWebsite });
-        setCoName(''); setCoInn(''); setCoPhone(''); setCoEmail(''); setCoWebsite('');
-        await load();
-    };
-
-    const deleteCompany = async (id: number) => {
-        if (!confirm('Удалить компанию?')) return;
-        await api.delete(`/companies/${id}`);
-        await load();
+        setSavingCompany(true);
+        try {
+            await api.post('/companies', { name: coName, inn: coInn, phone: coPhone, email: coEmail, website: coWebsite });
+            toast.success(`Компания «${coName}» добавлена`);
+            setCoName(''); setCoInn(''); setCoPhone(''); setCoEmail(''); setCoWebsite('');
+            await load();
+        } catch { toast.error('Не удалось создать компанию'); }
+        finally { setSavingCompany(false); }
     };
 
     const saveEdit = async (id: number) => {
-        if (tab === 'contacts') {
-            await api.patch(`/contacts/${id}`, editValues);
-        } else {
-            await api.patch(`/companies/${id}`, editValues);
-        }
-        setEditingId(null);
-        await load();
+        setSavingEdit(true);
+        try {
+            if (tab === 'contacts') await api.patch(`/contacts/${id}`, editValues);
+            else await api.patch(`/companies/${id}`, editValues);
+            setEditingId(null);
+            toast.success('Изменения сохранены');
+            await load();
+        } catch { toast.error('Не удалось сохранить изменения'); }
+        finally { setSavingEdit(false); }
     };
 
-    const tabStyle = (t: TabType): React.CSSProperties => ({
-        padding: '9px 24px', border: 'none',
-        borderBottom: tab === t ? '2px solid #10b981' : '2px solid transparent',
-        background: 'none', cursor: 'pointer',
-        fontWeight: tab === t ? 600 : 400,
-        color: tab === t ? '#059669' : '#6b7280', fontSize: 14,
-    });
+    const deleteContact = async (id: number, name: string) => {
+        if (!confirm(`Удалить контакт «${name}»?`)) return;
+        setDeletingId(id);
+        try { await api.delete(`/contacts/${id}`); toast.success(`Контакт «${name}» удалён`); await load(); }
+        catch { toast.error('Не удалось удалить контакт'); }
+        finally { setDeletingId(null); }
+    };
 
-    const filteredContacts = contacts.filter(c =>
-        c.name.toLowerCase().includes(search.toLowerCase()) ||
-        c.phone.includes(search) || c.email.toLowerCase().includes(search.toLowerCase())
+    const deleteCompany = async (id: number, name: string) => {
+        if (!confirm(`Удалить компанию «${name}»?`)) return;
+        setDeletingId(id);
+        try { await api.delete(`/companies/${id}`); toast.success(`Компания «${name}» удалена`); await load(); }
+        catch { toast.error('Не удалось удалить компанию'); }
+        finally { setDeletingId(null); }
+    };
+
+    const filteredContacts = contacts.filter(ct =>
+        ct.name.toLowerCase().includes(search.toLowerCase()) ||
+        ct.phone.includes(search) ||
+        ct.email.toLowerCase().includes(search.toLowerCase())
     );
-    const filteredCompanies = companies.filter(c =>
-        c.name.toLowerCase().includes(search.toLowerCase()) ||
-        c.inn.includes(search) || c.email.toLowerCase().includes(search.toLowerCase())
+    const filteredCompanies = companies.filter(co =>
+        co.name.toLowerCase().includes(search.toLowerCase()) ||
+        co.inn.includes(search) ||
+        co.email.toLowerCase().includes(search.toLowerCase())
+    );
+
+    const si: React.CSSProperties = inp({ fontSize: 12, padding: '6px 9px' });
+
+    const TabBtn = ({ t, label, count }: { t: TabType; label: string; count: number }) => (
+        <button onClick={() => { setTab(t); setSearch(''); setEditingId(null); }} style={{
+            padding: '10px 18px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13,
+            fontWeight: tab === t ? 600 : 400,
+            color: tab === t ? c.text1 : c.text2,
+            borderBottom: `2px solid ${tab === t ? c.blue : 'transparent'}`,
+            transition: 'color 0.15s, border-color 0.15s',
+            display: 'flex', alignItems: 'center', gap: 7,
+        }}>
+            {label}
+            <span style={{ fontSize: 11, background: tab === t ? 'rgba(59,130,246,0.15)' : 'rgba(255,255,255,0.06)', color: tab === t ? c.blue : c.text3, padding: '1px 7px', borderRadius: 99 }}>{count}</span>
+        </button>
     );
 
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-            <div style={{ display: 'flex', borderBottom: '1px solid #e5e7eb' }}>
-                <button style={tabStyle('contacts')} onClick={() => { setTab('contacts'); setSearch(''); setEditingId(null); }}>
-                    Контакты ({contacts.length})
-                </button>
-                <button style={tabStyle('companies')} onClick={() => { setTab('companies'); setSearch(''); setEditingId(null); }}>
-                    Компании ({companies.length})
-                </button>
+        <div style={{ background: c.bgCard, border: `1px solid ${c.border}`, borderRadius: 14, overflow: 'hidden' }}>
+            {/* Tabs */}
+            <div style={{ display: 'flex', borderBottom: `1px solid ${c.border}`, background: c.bgElevated, padding: '0 16px' }}>
+                <TabBtn t="contacts" label="Контакты" count={contacts.length} />
+                <TabBtn t="companies" label="Компании" count={companies.length} />
             </div>
 
-            <div style={{ padding: '16px 0', display: 'flex', flexDirection: 'column', gap: 16 }}>
-
+            <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
                 {/* Search */}
-                <input style={{ ...inp, width: '100%', boxSizing: 'border-box' }}
-                    placeholder={tab === 'contacts' ? 'Поиск по имени, телефону...' : 'Поиск по названию, ИНН...'}
-                    value={search} onChange={e => setSearch(e.target.value)} />
+                <input
+                    style={inp()}
+                    placeholder={tab === 'contacts' ? 'Поиск по имени, телефону, email...' : 'Поиск по названию, ИНН, email...'}
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                />
 
-                {/* Add form */}
+                {/* Add contact form */}
                 {tab === 'contacts' && (
                     <form onSubmit={e => { void createContact(e); }}
-                        style={{ display: 'flex', gap: 8, flexWrap: 'wrap', padding: '12px', background: '#f0fdf4', borderRadius: 6 }}>
-                        <input style={{ ...inp, flex: '1 0 130px' }} placeholder="Имя *" value={ctName} onChange={e => setCtName(e.target.value)} required />
-                        <input style={{ ...inp, flex: '1 0 120px' }} placeholder="Телефон" value={ctPhone} onChange={e => setCtPhone(e.target.value)} />
-                        <input style={{ ...inp, flex: '1 0 150px' }} placeholder="Email" value={ctEmail} onChange={e => setCtEmail(e.target.value)} />
-                        <select style={{ ...inp, flex: '1 0 160px' }} value={ctCompanyId} onChange={e => setCtCompanyId(e.target.value)}>
-                            <option value="">— Компания —</option>
-                            {companies.map(co => <option key={co.id} value={co.id}>{co.name}</option>)}
-                        </select>
-                        <button type="submit" style={btn('#10b981')}>+ Добавить</button>
+                        style={{ display: 'flex', gap: 8, flexWrap: 'wrap', padding: 14, background: c.bgElevated, borderRadius: 10, border: `1px solid ${c.border}`, alignItems: 'flex-end' }}>
+                        <div style={{ flex: '1 0 130px' }}>
+                            <div style={{ fontSize: 11, color: c.text2, fontWeight: 600, marginBottom: 4 }}>Имя *</div>
+                            <input style={si} placeholder="Иван Иванов" value={ctName} onChange={e => setCtName(e.target.value)} required />
+                        </div>
+                        <div style={{ flex: '1 0 120px' }}>
+                            <div style={{ fontSize: 11, color: c.text2, fontWeight: 600, marginBottom: 4 }}>Телефон</div>
+                            <input style={si} placeholder="+7 900..." value={ctPhone} onChange={e => setCtPhone(e.target.value)} />
+                        </div>
+                        <div style={{ flex: '1 0 150px' }}>
+                            <div style={{ fontSize: 11, color: c.text2, fontWeight: 600, marginBottom: 4 }}>Email</div>
+                            <input style={si} placeholder="mail@example.com" value={ctEmail} onChange={e => setCtEmail(e.target.value)} />
+                        </div>
+                        <div style={{ flex: '1 0 160px' }}>
+                            <div style={{ fontSize: 11, color: c.text2, fontWeight: 600, marginBottom: 4 }}>Компания</div>
+                            <select style={si} value={ctCompanyId} onChange={e => setCtCompanyId(e.target.value)}>
+                                <option value="">— Не выбрана —</option>
+                                {companies.map(co => <option key={co.id} value={co.id}>{co.name}</option>)}
+                            </select>
+                        </div>
+                        <button type="submit" disabled={savingContact} aria-busy={savingContact}
+                            style={{ ...btn(c.green, { padding: '7px 14px', fontSize: 12, display: 'flex', alignItems: 'center', gap: 5 }), opacity: savingContact ? 0.6 : 1, cursor: savingContact ? 'default' : 'pointer', alignSelf: 'end' }}>
+                            {savingContact ? <Spinner size={13} color="#fff" /> : <Plus size={13} strokeWidth={2.5} />} Добавить
+                        </button>
                     </form>
                 )}
 
+                {/* Add company form */}
                 {tab === 'companies' && (
                     <form onSubmit={e => { void createCompany(e); }}
-                        style={{ display: 'flex', gap: 8, flexWrap: 'wrap', padding: '12px', background: '#f0fdf4', borderRadius: 6 }}>
-                        <input style={{ ...inp, flex: '1 0 150px' }} placeholder="Название *" value={coName} onChange={e => setCoName(e.target.value)} required />
-                        <input style={{ ...inp, flex: '1 0 120px' }} placeholder="ИНН" value={coInn} onChange={e => setCoInn(e.target.value)} />
-                        <input style={{ ...inp, flex: '1 0 120px' }} placeholder="Телефон" value={coPhone} onChange={e => setCoPhone(e.target.value)} />
-                        <input style={{ ...inp, flex: '1 0 150px' }} placeholder="Email" value={coEmail} onChange={e => setCoEmail(e.target.value)} />
-                        <input style={{ ...inp, flex: '1 0 150px' }} placeholder="Сайт" value={coWebsite} onChange={e => setCoWebsite(e.target.value)} />
-                        <button type="submit" style={btn('#10b981')}>+ Добавить</button>
+                        style={{ display: 'flex', gap: 8, flexWrap: 'wrap', padding: 14, background: c.bgElevated, borderRadius: 10, border: `1px solid ${c.border}`, alignItems: 'flex-end' }}>
+                        <div style={{ flex: '1 0 150px' }}>
+                            <div style={{ fontSize: 11, color: c.text2, fontWeight: 600, marginBottom: 4 }}>Название *</div>
+                            <input style={si} placeholder="ООО Компания" value={coName} onChange={e => setCoName(e.target.value)} required />
+                        </div>
+                        <div style={{ flex: '1 0 110px' }}>
+                            <div style={{ fontSize: 11, color: c.text2, fontWeight: 600, marginBottom: 4 }}>ИНН</div>
+                            <input style={si} placeholder="7700000000" value={coInn} onChange={e => setCoInn(e.target.value)} />
+                        </div>
+                        <div style={{ flex: '1 0 120px' }}>
+                            <div style={{ fontSize: 11, color: c.text2, fontWeight: 600, marginBottom: 4 }}>Телефон</div>
+                            <input style={si} placeholder="+7 495..." value={coPhone} onChange={e => setCoPhone(e.target.value)} />
+                        </div>
+                        <div style={{ flex: '1 0 150px' }}>
+                            <div style={{ fontSize: 11, color: c.text2, fontWeight: 600, marginBottom: 4 }}>Email</div>
+                            <input style={si} placeholder="info@co.ru" value={coEmail} onChange={e => setCoEmail(e.target.value)} />
+                        </div>
+                        <div style={{ flex: '1 0 150px' }}>
+                            <div style={{ fontSize: 11, color: c.text2, fontWeight: 600, marginBottom: 4 }}>Сайт</div>
+                            <input style={si} placeholder="https://site.ru" value={coWebsite} onChange={e => setCoWebsite(e.target.value)} />
+                        </div>
+                        <button type="submit" disabled={savingCompany} aria-busy={savingCompany}
+                            style={{ ...btn(c.green, { padding: '7px 14px', fontSize: 12, display: 'flex', alignItems: 'center', gap: 5 }), opacity: savingCompany ? 0.6 : 1, cursor: savingCompany ? 'default' : 'pointer', alignSelf: 'end' }}>
+                            {savingCompany ? <Spinner size={13} color="#fff" /> : <Plus size={13} strokeWidth={2.5} />} Добавить
+                        </button>
                     </form>
                 )}
 
-                {/* List */}
-                {tab === 'contacts' && (
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                        <thead>
-                            <tr style={{ background: '#f9fafb', textAlign: 'left' }}>
-                                <th style={{ padding: '8px 10px' }}>Имя</th>
-                                <th style={{ padding: '8px 10px' }}>Телефон</th>
-                                <th style={{ padding: '8px 10px' }}>Email</th>
-                                <th style={{ padding: '8px 10px' }}>Компания</th>
-                                <th style={{ padding: '8px 10px' }}>Действия</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {filteredContacts.map(ct => (
-                                <tr key={ct.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                                    <td style={{ padding: '8px 10px' }}>
-                                        {editingId === ct.id
-                                            ? <input style={{ ...inp, width: 130 }} value={editValues['name'] ?? ct.name} onChange={e => setEditValues(p => ({ ...p, name: e.target.value }))} />
-                                            : <strong>{ct.name}</strong>}
-                                    </td>
-                                    <td style={{ padding: '8px 10px' }}>
-                                        {editingId === ct.id
-                                            ? <input style={{ ...inp, width: 120 }} value={editValues['phone'] ?? ct.phone} onChange={e => setEditValues(p => ({ ...p, phone: e.target.value }))} />
-                                            : ct.phone || '—'}
-                                    </td>
-                                    <td style={{ padding: '8px 10px' }}>
-                                        {editingId === ct.id
-                                            ? <input style={{ ...inp, width: 150 }} value={editValues['email'] ?? ct.email} onChange={e => setEditValues(p => ({ ...p, email: e.target.value }))} />
-                                            : ct.email || '—'}
-                                    </td>
-                                    <td style={{ padding: '8px 10px', color: '#6b7280' }}>{ct.company_name || '—'}</td>
-                                    <td style={{ padding: '8px 10px' }}>
-                                        {editingId === ct.id ? (
-                                            <div style={{ display: 'flex', gap: 4 }}>
-                                                <button onClick={() => void saveEdit(ct.id)} style={btn('#10b981')}>✓</button>
-                                                <button onClick={() => setEditingId(null)} style={btn('#6b7280')}>✕</button>
-                                            </div>
-                                        ) : (
-                                            <div style={{ display: 'flex', gap: 4 }}>
-                                                <button onClick={() => { setEditingId(ct.id); setEditValues({ name: ct.name, phone: ct.phone, email: ct.email }); }} style={btn('#f59e0b')}>✎</button>
-                                                <button onClick={() => void deleteContact(ct.id)} style={btn('#ef4444')}>✕</button>
-                                            </div>
-                                        )}
-                                    </td>
+                {/* Contacts table */}
+                {tab === 'contacts' && (loadingData ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 16, background: c.bgElevated, borderRadius: 10, border: `1px solid ${c.border}` }}>
+                        {[1, 2, 3, 4].map(i => <Skeleton key={i} height={40} borderRadius={6} />)}
+                    </div>
+                ) : filteredContacts.length === 0 && !search ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '36px 20px', gap: 10, textAlign: 'center', background: c.bgElevated, borderRadius: 10, border: `1px solid ${c.border}` }}>
+                        <Users size={28} color={c.text3} strokeWidth={1.5} />
+                        <p style={{ margin: 0, fontWeight: 600, fontSize: 14, color: c.text2 }}>Нет контактов</p>
+                        <p style={{ margin: 0, fontSize: 12, color: c.text3 }}>Добавьте первый контакт с помощью формы выше</p>
+                    </div>
+                ) : (
+                    <div style={{ overflowX: 'auto', background: c.bgElevated, borderRadius: 10, border: `1px solid ${c.border}` }}>
+                        <table style={{ minWidth: 560, width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                            <thead>
+                                <tr style={{ background: 'rgba(255,255,255,0.03)' }}>
+                                    {['Имя', 'Телефон', 'Email', 'Компания', ''].map(h => (
+                                        <th key={h} style={{ padding: '9px 12px', textAlign: 'left', color: c.text2, fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>{h}</th>
+                                    ))}
                                 </tr>
-                            ))}
-                            {filteredContacts.length === 0 && (
-                                <tr><td colSpan={5} style={{ padding: 20, textAlign: 'center', color: '#9ca3af' }}>Контактов не найдено</td></tr>
-                            )}
-                        </tbody>
-                    </table>
-                )}
+                            </thead>
+                            <tbody>
+                                {filteredContacts.map(ct => (
+                                    <tr key={ct.id} style={{ borderTop: `1px solid ${c.border}` }}>
+                                        <td style={{ padding: '9px 12px', color: c.text1, fontWeight: 500 }}>
+                                            {editingId === ct.id
+                                                ? <input style={{ ...si, width: 130 }} value={editValues['name'] ?? ct.name} onChange={e => setEditValues(p => ({ ...p, name: e.target.value }))} />
+                                                : ct.name}
+                                        </td>
+                                        <td style={{ padding: '9px 12px', color: c.text2 }}>
+                                            {editingId === ct.id
+                                                ? <input style={{ ...si, width: 120 }} value={editValues['phone'] ?? ct.phone} onChange={e => setEditValues(p => ({ ...p, phone: e.target.value }))} />
+                                                : ct.phone || '—'}
+                                        </td>
+                                        <td style={{ padding: '9px 12px', color: c.text2 }}>
+                                            {editingId === ct.id
+                                                ? <input style={{ ...si, width: 150 }} value={editValues['email'] ?? ct.email} onChange={e => setEditValues(p => ({ ...p, email: e.target.value }))} />
+                                                : ct.email || '—'}
+                                        </td>
+                                        <td style={{ padding: '9px 12px', color: c.text3, fontSize: 12 }}>{ct.company_name || '—'}</td>
+                                        <td style={{ padding: '9px 12px' }}>
+                                            {editingId === ct.id ? (
+                                                <div style={{ display: 'flex', gap: 4 }}>
+                                                    <IBtn onClick={() => void saveEdit(ct.id)} Icon={Check} color={c.green} title="Сохранить" loading={savingEdit} />
+                                                    <IBtn onClick={() => setEditingId(null)} Icon={X} title="Отмена" disabled={savingEdit} />
+                                                </div>
+                                            ) : (
+                                                <div style={{ display: 'flex', gap: 4 }}>
+                                                    <IBtn onClick={() => { setEditingId(ct.id); setEditValues({ name: ct.name, phone: ct.phone, email: ct.email }); }} Icon={Pencil} color={c.amber} title="Изменить контакт" />
+                                                    <IBtn onClick={() => void deleteContact(ct.id, ct.name)} Icon={Trash2} color={c.red} title="Удалить контакт" loading={deletingId === ct.id} />
+                                                </div>
+                                            )}
+                                        </td>
+                                    </tr>
+                                ))}
+                                {filteredContacts.length === 0 && search && (
+                                    <tr><td colSpan={5} style={{ padding: 24, textAlign: 'center', color: c.text3 }}>Контактов по запросу не найдено</td></tr>
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                ))}
 
-                {tab === 'companies' && (
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                        <thead>
-                            <tr style={{ background: '#f9fafb', textAlign: 'left' }}>
-                                <th style={{ padding: '8px 10px' }}>Название</th>
-                                <th style={{ padding: '8px 10px' }}>ИНН</th>
-                                <th style={{ padding: '8px 10px' }}>Телефон</th>
-                                <th style={{ padding: '8px 10px' }}>Email</th>
-                                <th style={{ padding: '8px 10px' }}>Сайт</th>
-                                <th style={{ padding: '8px 10px' }}>Действия</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {filteredCompanies.map(co => (
-                                <tr key={co.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                                    <td style={{ padding: '8px 10px' }}>
-                                        {editingId === co.id
-                                            ? <input style={{ ...inp, width: 140 }} value={editValues['name'] ?? co.name} onChange={e => setEditValues(p => ({ ...p, name: e.target.value }))} />
-                                            : <strong>{co.name}</strong>}
-                                    </td>
-                                    <td style={{ padding: '8px 10px' }}>
-                                        {editingId === co.id
-                                            ? <input style={{ ...inp, width: 110 }} value={editValues['inn'] ?? co.inn} onChange={e => setEditValues(p => ({ ...p, inn: e.target.value }))} />
-                                            : co.inn || '—'}
-                                    </td>
-                                    <td style={{ padding: '8px 10px' }}>
-                                        {editingId === co.id
-                                            ? <input style={{ ...inp, width: 120 }} value={editValues['phone'] ?? co.phone} onChange={e => setEditValues(p => ({ ...p, phone: e.target.value }))} />
-                                            : co.phone || '—'}
-                                    </td>
-                                    <td style={{ padding: '8px 10px' }}>
-                                        {editingId === co.id
-                                            ? <input style={{ ...inp, width: 150 }} value={editValues['email'] ?? co.email} onChange={e => setEditValues(p => ({ ...p, email: e.target.value }))} />
-                                            : co.email || '—'}
-                                    </td>
-                                    <td style={{ padding: '8px 10px' }}>
-                                        {co.website
-                                            ? <a href={co.website} target="_blank" rel="noreferrer" style={{ color: '#3b82f6', fontSize: 12 }}>{co.website}</a>
-                                            : '—'}
-                                    </td>
-                                    <td style={{ padding: '8px 10px' }}>
-                                        {editingId === co.id ? (
-                                            <div style={{ display: 'flex', gap: 4 }}>
-                                                <button onClick={() => void saveEdit(co.id)} style={btn('#10b981')}>✓</button>
-                                                <button onClick={() => setEditingId(null)} style={btn('#6b7280')}>✕</button>
-                                            </div>
-                                        ) : (
-                                            <div style={{ display: 'flex', gap: 4 }}>
-                                                <button onClick={() => { setEditingId(co.id); setEditValues({ name: co.name, inn: co.inn, phone: co.phone, email: co.email, website: co.website }); }} style={btn('#f59e0b')}>✎</button>
-                                                <button onClick={() => void deleteCompany(co.id)} style={btn('#ef4444')}>✕</button>
-                                            </div>
-                                        )}
-                                    </td>
+                {/* Companies table */}
+                {tab === 'companies' && (loadingData ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 16, background: c.bgElevated, borderRadius: 10, border: `1px solid ${c.border}` }}>
+                        {[1, 2, 3, 4].map(i => <Skeleton key={i} height={40} borderRadius={6} />)}
+                    </div>
+                ) : filteredCompanies.length === 0 && !search ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '36px 20px', gap: 10, textAlign: 'center', background: c.bgElevated, borderRadius: 10, border: `1px solid ${c.border}` }}>
+                        <Users size={28} color={c.text3} strokeWidth={1.5} />
+                        <p style={{ margin: 0, fontWeight: 600, fontSize: 14, color: c.text2 }}>Нет компаний</p>
+                        <p style={{ margin: 0, fontSize: 12, color: c.text3 }}>Добавьте первую компанию с помощью формы выше</p>
+                    </div>
+                ) : (
+                    <div style={{ overflowX: 'auto', background: c.bgElevated, borderRadius: 10, border: `1px solid ${c.border}` }}>
+                        <table style={{ minWidth: 620, width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                            <thead>
+                                <tr style={{ background: 'rgba(255,255,255,0.03)' }}>
+                                    {['Название', 'ИНН', 'Телефон', 'Email', 'Сайт', ''].map(h => (
+                                        <th key={h} style={{ padding: '9px 12px', textAlign: 'left', color: c.text2, fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>{h}</th>
+                                    ))}
                                 </tr>
-                            ))}
-                            {filteredCompanies.length === 0 && (
-                                <tr><td colSpan={6} style={{ padding: 20, textAlign: 'center', color: '#9ca3af' }}>Компаний не найдено</td></tr>
-                            )}
-                        </tbody>
-                    </table>
-                )}
+                            </thead>
+                            <tbody>
+                                {filteredCompanies.map(co => (
+                                    <tr key={co.id} style={{ borderTop: `1px solid ${c.border}` }}>
+                                        <td style={{ padding: '9px 12px', color: c.text1, fontWeight: 500 }}>
+                                            {editingId === co.id
+                                                ? <input style={{ ...si, width: 140 }} value={editValues['name'] ?? co.name} onChange={e => setEditValues(p => ({ ...p, name: e.target.value }))} />
+                                                : co.name}
+                                        </td>
+                                        <td style={{ padding: '9px 12px', color: c.text2 }}>
+                                            {editingId === co.id
+                                                ? <input style={{ ...si, width: 110 }} value={editValues['inn'] ?? co.inn} onChange={e => setEditValues(p => ({ ...p, inn: e.target.value }))} />
+                                                : co.inn || '—'}
+                                        </td>
+                                        <td style={{ padding: '9px 12px', color: c.text2 }}>
+                                            {editingId === co.id
+                                                ? <input style={{ ...si, width: 120 }} value={editValues['phone'] ?? co.phone} onChange={e => setEditValues(p => ({ ...p, phone: e.target.value }))} />
+                                                : co.phone || '—'}
+                                        </td>
+                                        <td style={{ padding: '9px 12px', color: c.text2 }}>
+                                            {editingId === co.id
+                                                ? <input style={{ ...si, width: 150 }} value={editValues['email'] ?? co.email} onChange={e => setEditValues(p => ({ ...p, email: e.target.value }))} />
+                                                : co.email || '—'}
+                                        </td>
+                                        <td style={{ padding: '9px 12px' }}>
+                                            {co.website
+                                                ? <a href={co.website} target="_blank" rel="noreferrer" title={co.website} style={{ color: c.blue, display: 'inline-flex', alignItems: 'center' }}>
+                                                    <ExternalLink size={13} strokeWidth={2} />
+                                                  </a>
+                                                : <span style={{ color: c.text3 }}>—</span>}
+                                        </td>
+                                        <td style={{ padding: '9px 12px' }}>
+                                            {editingId === co.id ? (
+                                                <div style={{ display: 'flex', gap: 4 }}>
+                                                    <IBtn onClick={() => void saveEdit(co.id)} Icon={Check} color={c.green} title="Сохранить" loading={savingEdit} />
+                                                    <IBtn onClick={() => setEditingId(null)} Icon={X} title="Отмена" disabled={savingEdit} />
+                                                </div>
+                                            ) : (
+                                                <div style={{ display: 'flex', gap: 4 }}>
+                                                    <IBtn onClick={() => { setEditingId(co.id); setEditValues({ name: co.name, inn: co.inn, phone: co.phone, email: co.email, website: co.website }); }} Icon={Pencil} color={c.amber} title="Изменить компанию" />
+                                                    <IBtn onClick={() => void deleteCompany(co.id, co.name)} Icon={Trash2} color={c.red} title="Удалить компанию" loading={deletingId === co.id} />
+                                                </div>
+                                            )}
+                                        </td>
+                                    </tr>
+                                ))}
+                                {filteredCompanies.length === 0 && search && (
+                                    <tr><td colSpan={6} style={{ padding: 24, textAlign: 'center', color: c.text3 }}>Компаний по запросу не найдено</td></tr>
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                ))}
             </div>
         </div>
     );
