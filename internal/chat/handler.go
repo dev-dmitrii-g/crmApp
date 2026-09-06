@@ -149,17 +149,25 @@ func SendMessage(c *gin.Context) {
 
 	var jid types.JID
 	if len(phone) > 4 && phone[:4] == "lid_" {
+		// Stored as lid_ prefix — route directly via HiddenUserServer.
 		jid = types.NewJID(phone[4:], types.HiddenUserServer)
 	} else {
-		// Strip everything that is not a digit — WhatsApp JIDs never contain +, spaces or dashes
 		cleaned := strings.Map(func(r rune) rune {
 			if unicode.IsDigit(r) {
 				return r
 			}
 			return -1
 		}, phone)
-		log.Printf("[SEND] phone=%q cleaned=%q", phone, cleaned)
-		jid = types.NewJID(cleaned, types.DefaultUserServer)
+		// Check if this contact uses LID encryption: WhatsApp might require routing
+		// via HiddenUserServer even when we store the regular phone number.
+		pnJID := types.NewJID(cleaned, types.DefaultUserServer)
+		if lidJID, err2 := client.Store.LIDs.GetLIDForPN(ctx, pnJID); err2 == nil && !lidJID.IsEmpty() {
+			jid = lidJID
+			log.Printf("[SEND] phone=%q → LID %s", cleaned, lidJID.String())
+		} else {
+			jid = pnJID
+			log.Printf("[SEND] phone=%q → PN %s", cleaned, pnJID.String())
+		}
 	}
 
 	waMsg := &waE2E.Message{

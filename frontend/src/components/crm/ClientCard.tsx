@@ -4,6 +4,7 @@ import api from '../../services/api';
 import { useToast } from '../../hooks/useToast';
 import { Spinner } from '../ui/Spinner';
 import { c, inp as themeInp, btn } from '../../theme';
+import { formatPhone } from '../../utils';
 import type { Client, Stage, FieldDefinition, FieldStageVisibility, Contact, Company, ClientCounterparties } from '../../types';
 
 interface Props {
@@ -32,8 +33,6 @@ const evaluateFormula = (formula: string, values: Record<string, string>): strin
     }
 };
 
-const formatPhone = (phone: string) =>
-    phone.startsWith('lid_') ? 'WhatsApp LID: ' + phone.slice(4) : phone;
 
 export const ClientCard: React.FC<Props> = ({
     client, stages, fieldDefinitions, fieldVisibility, onClose, onRefresh,

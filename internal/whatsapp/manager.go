@@ -204,11 +204,38 @@ func (m *Manager) setupEventHandler(client *whatsmeow.Client, userID uint) {
 				return
 			}
 
-			// Detect LID contacts (new WhatsApp privacy system, server = "lid.us").
-			// Store them with "lid_" prefix so SendMessage can route via HiddenUserServer.
+			// Resolve the sender's phone number.
+			// For LID-addressed messages, WhatsApp provides the actual phone JID in SenderAlt.
+			// If SenderAlt is absent, fall back to the local LID↔PN cache maintained by whatsmeow.
+			// Only use the lid_ prefix when we truly cannot resolve the phone.
+			senderIsLID := v.Info.Sender.Server == watypes.HiddenUserServer
 			var phone string
-			if v.Info.Sender.Server == watypes.HiddenUserServer {
-				phone = "lid_" + v.Info.Sender.User
+
+			if senderIsLID {
+				resolved := false
+				// 1. SenderAlt — WhatsApp fills this from "sender_pn" in the message envelope.
+				if !v.Info.SenderAlt.IsEmpty() && v.Info.SenderAlt.Server == watypes.DefaultUserServer {
+					phone = normalizePhone(v.Info.SenderAlt.User)
+					resolved = phone != ""
+					if resolved {
+						log.Printf("[WA-INCOMING] LID %s → phone %s (SenderAlt)", v.Info.Sender.User, phone)
+					}
+				}
+				// 2. Local LID store (cached from previous exchanges).
+				if !resolved {
+					if pnJID, err2 := client.Store.LIDs.GetPNForLID(context.Background(), v.Info.Sender); err2 == nil && !pnJID.IsEmpty() {
+						phone = normalizePhone(pnJID.User)
+						resolved = phone != ""
+						if resolved {
+							log.Printf("[WA-INCOMING] LID %s → phone %s (LIDStore)", v.Info.Sender.User, phone)
+						}
+					}
+				}
+				// 3. Fallback — keep lid_ prefix so SendMessage still knows to use HiddenUserServer.
+				if !resolved {
+					phone = "lid_" + v.Info.Sender.User
+					log.Printf("[WA-INCOMING] LID %s unresolved, keeping lid_ prefix", v.Info.Sender.User)
+				}
 			} else {
 				phone = v.Info.Sender.User
 				if phone == "" {
@@ -216,29 +243,42 @@ func (m *Manager) setupEventHandler(client *whatsmeow.Client, userID uint) {
 				}
 				phone = normalizePhone(phone)
 			}
-			log.Printf("[WA-INCOMING] sender JID=%s server=%s → stored phone=%q", v.Info.Sender.String(), v.Info.Sender.Server, phone)
+			log.Printf("[WA-INCOMING] sender=%s → phone=%q", v.Info.Sender.String(), phone)
 
 			senderName := v.Info.PushName
 			if senderName == "" {
 				senderName = "Лид (" + phone + ")"
 			}
 
-			log.Printf("[WA-INCOMING] Сообщение от %s (%s): %s", senderName, phone, text)
-
-			// Match regardless of whether phone was stored with +, without, or as lid_
+			// Look up the client, also checking the old lid_ key for migration.
 			var clientID int
-			var altPhone string
-			if strings.HasPrefix(phone, "lid_") {
-				// LID: only exact match (no normalization variants)
-				altPhone = phone
+			var storedPhone string
+			var lookupErr error
+
+			if senderIsLID && !strings.HasPrefix(phone, "lid_") {
+				// Resolved to a real phone — also check old lid_ entry to migrate it.
+				lidKey := "lid_" + v.Info.Sender.User
+				lookupErr = db.DB.QueryRow(
+					"SELECT id, phone FROM clients WHERE phone = ? OR phone = ? OR phone = ?",
+					phone, "+"+phone, lidKey,
+				).Scan(&clientID, &storedPhone)
+				// Migrate: update stored lid_ to real phone number.
+				if lookupErr == nil && strings.HasPrefix(storedPhone, "lid_") {
+					_, _ = db.DB.Exec("UPDATE clients SET phone = ? WHERE id = ?", phone, clientID)
+					log.Printf("[WA-INCOMING] Migrated client %d: %s → %s", clientID, storedPhone, phone)
+				}
+			} else if strings.HasPrefix(phone, "lid_") {
+				lookupErr = db.DB.QueryRow(
+					"SELECT id, phone FROM clients WHERE phone = ?", phone,
+				).Scan(&clientID, &storedPhone)
 			} else {
-				// Regular phone: also try with "+" prefix (manually-entered phones)
-				altPhone = "+" + phone
+				lookupErr = db.DB.QueryRow(
+					"SELECT id, phone FROM clients WHERE phone = ? OR phone = ?",
+					phone, "+"+phone,
+				).Scan(&clientID, &storedPhone)
 			}
-			err := db.DB.QueryRow(
-				"SELECT id FROM clients WHERE phone = ? OR phone = ?",
-				phone, altPhone,
-			).Scan(&clientID)
+
+			err := lookupErr
 			if err != nil {
 				res, err := db.DB.Exec("INSERT INTO clients (phone, name, status, manager_id) VALUES (?, ?, 'new', ?)",
 					phone, senderName, userID)

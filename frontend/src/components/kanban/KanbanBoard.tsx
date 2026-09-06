@@ -4,6 +4,7 @@ import type { Stage, Client, TransitionRule, StageRequiredField, LossReason } fr
 import { c } from '../../theme';
 import { useToast } from '../../hooks/useToast';
 import { SkeletonColumn } from '../ui/Skeleton';
+import { formatPhone } from '../../utils';
 
 interface Props {
     stages: Stage[];
@@ -364,7 +365,7 @@ const ClientCardItem: React.FC<CardItemProps> = ({ client, waConnected, onOpenCh
                     <div style={{ fontWeight: 600, fontSize: 13, color: c.text1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                         {client.name}
                     </div>
-                    <div style={{ fontSize: 11, color: c.text2, marginTop: 2 }}>{client.phone}</div>
+                    <div style={{ fontSize: 11, color: c.text2, marginTop: 2 }}>{formatPhone(client.phone)}</div>
                     {client.loss_reason && (
                         <div style={{ fontSize: 11, color: c.red, marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
                             <X size={10} strokeWidth={2.5} /> {client.loss_reason}
