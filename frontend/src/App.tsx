@@ -18,8 +18,8 @@ type TabType = 'kanban' | 'counterparties' | 'admin';
 export default function App() {
   const toast = useToast();
   const [token, setToken] = useState<string>(localStorage.getItem('token') || '');
-  const [email, setEmail] = useState<string>('manager@test.com');
-  const [password, setPassword] = useState<string>('password123');
+  const [email, setEmail] = useState<string>('');
+  const [password, setPassword] = useState<string>('');
   const [userRole, setUserRole] = useState<string>(localStorage.getItem('role') || 'manager');
 
   const [activeTab, setActiveTab] = useState<TabType>('kanban');
@@ -309,8 +309,8 @@ export default function App() {
             <p style={{ margin: '6px 0 0', fontSize: 13, color: c.text2 }}>нифиговый crm</p>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="Email" style={inp()} />
-            <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Пароль" style={inp()} />
+            <input type="email" onChange={e => setEmail(e.target.value)} placeholder="Email" style={inp()} />
+            <input type="password" onChange={e => setPassword(e.target.value)} placeholder="Пароль" style={inp()} />
             <button type="submit" style={btn('#25D366', { padding: '11px', fontSize: 14, fontWeight: 700, borderRadius: 10, marginTop: 4, boxShadow: '0 4px 14px rgba(37,211,102,0.25)' })}>
               Войти
             </button>
