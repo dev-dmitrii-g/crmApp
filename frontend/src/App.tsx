@@ -41,6 +41,7 @@ export default function App() {
   const [loadingKanban, setLoadingKanban] = useState<boolean>(true);
   const [managers, setManagers] = useState<Manager[]>([]);
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
+  const [waConnected, setWaConnected] = useState(false);
 
   const isAdmin = userRole === 'admin';
   const [loadingMessages, setLoadingMessages] = useState(false);
@@ -106,6 +107,7 @@ export default function App() {
     if (token) {
       void fetchStages();
       void fetchClients();
+      void fetchWAStatus();
       if (activeTab === 'admin') void fetchAdminData();
     }
   }, [token, activeTab]);
@@ -146,6 +148,13 @@ export default function App() {
       setManagers(mR.data || []);
       setAnalytics(aR.data);
     } catch (err) { console.error(err); }
+  }, []);
+
+  const fetchWAStatus = useCallback(async () => {
+    try {
+      const r = await api.get<{ connected: boolean }>('/whatsapp/status');
+      setWaConnected(r.data.connected);
+    } catch { /* ignore */ }
   }, []);
 
   // Keep function refs fresh so the WS handler always calls the latest version
@@ -299,6 +308,21 @@ export default function App() {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+          {/* WhatsApp connection status pill */}
+          <div
+            title={waConnected ? 'WhatsApp подключён' : 'WhatsApp не подключён — чат недоступен'}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 5,
+              padding: '4px 10px', borderRadius: 99, fontSize: 11, fontWeight: 600,
+              background: waConnected ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.10)',
+              color: waConnected ? c.green : c.red,
+              border: `1px solid ${waConnected ? 'rgba(16,185,129,0.25)' : 'rgba(239,68,68,0.22)'}`,
+              userSelect: 'none',
+            }}
+          >
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: waConnected ? c.green : c.red, flexShrink: 0 }} />
+            {waConnected ? 'WA' : 'WA офлайн'}
+          </div>
           <button
             onClick={() => { localStorage.clear(); setToken(''); setUserRole('manager'); }}
             title="Выйти"
@@ -322,6 +346,7 @@ export default function App() {
                 lossReasons={lossReasons}
                 isAdmin={isAdmin}
                 loading={loadingKanban}
+                waConnected={waConnected}
                 onOpenChat={cl => { void openChat(cl); }}
                 onOpenCard={cl => setCardClient(cl)}
                 onUpdateStatus={(id, s, r, cf) => { void updateStatus(id, s, r, cf); }}
@@ -361,6 +386,7 @@ export default function App() {
               managers={managers}
               analytics={analytics}
               onRefresh={() => { void fetchStages(); void fetchAdminData(); }}
+              onWAConnected={() => setWaConnected(true)}
             />
           </div>
         )}

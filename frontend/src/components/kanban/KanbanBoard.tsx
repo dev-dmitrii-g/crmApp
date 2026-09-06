@@ -13,6 +13,7 @@ interface Props {
     lossReasons: LossReason[];
     isAdmin: boolean;
     loading?: boolean;
+    waConnected?: boolean;
     onOpenChat: (client: Client) => void;
     onOpenCard: (client: Client) => void;
     onUpdateStatus: (id: number, status: string, lossReason?: string, customFields?: Record<string, string>) => void;
@@ -28,7 +29,7 @@ interface RequiredFieldsModal {
 
 export const KanbanBoard: React.FC<Props> = ({
     stages, clients, transitionRules, stageRequiredFields, lossReasons,
-    isAdmin, loading, onOpenChat, onOpenCard, onUpdateStatus, onReorderStages,
+    isAdmin, loading, waConnected, onOpenChat, onOpenCard, onUpdateStatus, onReorderStages,
 }) => {
     const toast = useToast();
     const [rejectModal, setRejectModal] = useState<RejectModal | null>(null);
@@ -238,6 +239,7 @@ export const KanbanBoard: React.FC<Props> = ({
                                 <ClientCardItem
                                     key={client.id}
                                     client={client}
+                                    waConnected={waConnected}
                                     onOpenChat={() => onOpenChat(client)}
                                     onOpenCard={() => onOpenCard(client)}
                                     onDragStart={e => onCardDragStart(e, client.id)}
@@ -324,13 +326,15 @@ export const KanbanBoard: React.FC<Props> = ({
 
 interface CardItemProps {
     client: Client;
+    waConnected?: boolean;
     onOpenChat: () => void;
     onOpenCard: () => void;
     onDragStart: (e: React.DragEvent) => void;
     onDragEnd: () => void;
 }
 
-const ClientCardItem: React.FC<CardItemProps> = ({ client, onOpenChat, onOpenCard, onDragStart, onDragEnd }) => {
+const ClientCardItem: React.FC<CardItemProps> = ({ client, waConnected, onOpenChat, onOpenCard, onDragStart, onDragEnd }) => {
+    const toast = useToast();
     const [hovered, setHovered] = useState(false);
 
     const customEntries = Object.entries(client.custom_fields ?? {}).filter(([, v]) => v);
@@ -384,10 +388,22 @@ const ClientCardItem: React.FC<CardItemProps> = ({ client, onOpenChat, onOpenCar
                         style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, background: 'rgba(255,255,255,0.08)', border: 'none', borderRadius: 6, cursor: 'pointer' }}
                     ><FileText size={13} color={c.text2} strokeWidth={1.8} /></button>
                     <button
-                        onClick={e => { e.stopPropagation(); onOpenChat(); }}
-                        title="Чат"
-                        style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, background: 'rgba(255,255,255,0.08)', border: 'none', borderRadius: 6, cursor: 'pointer' }}
-                    ><MessageCircle size={13} color={c.text2} strokeWidth={1.8} /></button>
+                        onClick={e => {
+                            e.stopPropagation();
+                            if (!waConnected) {
+                                toast.info('WhatsApp не подключён — обратитесь к администратору');
+                                return;
+                            }
+                            onOpenChat();
+                        }}
+                        title={waConnected ? 'Чат' : 'WhatsApp не подключён'}
+                        style={{
+                            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                            width: 26, height: 26, background: 'rgba(255,255,255,0.08)', border: 'none',
+                            borderRadius: 6, cursor: waConnected ? 'pointer' : 'not-allowed',
+                            opacity: waConnected ? 1 : 0.38,
+                        }}
+                    ><MessageCircle size={13} color={waConnected ? c.text2 : c.text3} strokeWidth={1.8} /></button>
                 </div>
             </div>
         </div>

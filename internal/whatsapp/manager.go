@@ -55,12 +55,35 @@ func InitWAManager(ctx context.Context, dbPath string) (*Manager, error) {
 	return mgr, nil
 }
 
+// IsConnected returns true when any WhatsApp session is live.
+func (m *Manager) IsConnected() bool {
+	m.clientsMu.RLock()
+	defer m.clientsMu.RUnlock()
+	for _, cl := range m.clients {
+		if cl.IsConnected() && cl.IsLoggedIn() {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *Manager) GetClient(ctx context.Context, userID uint) (*whatsmeow.Client, error) {
 	m.clientsMu.Lock()
 	defer m.clientsMu.Unlock()
 
+	// Return the existing client for this user.
 	if client, exists := m.clients[userID]; exists {
 		return client, nil
+	}
+
+	// For a single-account CRM: reuse any already-connected client instead of
+	// creating a second whatsmeow.Client for the same device store, which
+	// would cause duplicate event handlers and double-store writes.
+	for _, client := range m.clients {
+		if client.IsConnected() {
+			m.clients[userID] = client
+			return client, nil
+		}
 	}
 
 	deviceStore, err := m.container.GetFirstDevice(ctx)
@@ -75,6 +98,15 @@ func (m *Manager) GetClient(ctx context.Context, userID uint) (*whatsmeow.Client
 
 	m.setupEventHandler(client, userID)
 	m.clients[userID] = client
+
+	// If credentials are already stored (device has a JID), reconnect without QR.
+	if deviceStore.ID != nil && !client.IsConnected() {
+		if err := client.Connect(); err != nil {
+			log.Printf("[WA] Auto-reconnect failed for user %d: %v", userID, err)
+		} else {
+			log.Printf("[WA] Session restored from store for user %d", userID)
+		}
+	}
 
 	return client, nil
 }

@@ -14,6 +14,11 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
+func GetStatus(c *gin.Context) {
+	connected := WAManager != nil && WAManager.IsConnected()
+	c.JSON(http.StatusOK, gin.H{"connected": connected})
+}
+
 func HandleQRWebSocket(c *gin.Context) {
 	tokenStr := c.Query("token")
 	if tokenStr == "" {

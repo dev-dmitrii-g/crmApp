@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import api from '../../services/api';
 import { QRCodeSVG } from 'qrcode.react';
 import {
@@ -19,6 +19,7 @@ interface Props {
     managers: Manager[];
     analytics: Analytics | null;
     onRefresh: () => void;
+    onWAConnected: () => void;
 }
 
 type Section = 'pipeline' | 'fields' | 'team' | 'whatsapp' | 'analytics';
@@ -32,7 +33,7 @@ const NAV: { key: Section; Icon: React.FC<{ size?: number; strokeWidth?: number 
 ];
 
 export const AdminPanel: React.FC<Props> = ({
-    stages, fieldDefinitions, fieldVisibility, managers, analytics, onRefresh,
+    stages, fieldDefinitions, fieldVisibility, managers, analytics, onRefresh, onWAConnected,
 }) => {
     const toast = useToast();
     const [section, setSection] = useState<Section>('pipeline');
@@ -43,7 +44,16 @@ export const AdminPanel: React.FC<Props> = ({
     const [savingManager, setSavingManager] = useState(false);
 
     const [qrCode, setQrCode] = useState('');
-    const [waStatus, setWaStatus] = useState<'idle' | 'connecting' | 'connected'>('idle');
+    const [waStatus, setWaStatus] = useState<'idle' | 'checking' | 'connecting' | 'connected'>('idle');
+
+    // Check WA status when the WhatsApp section is opened
+    useEffect(() => {
+        if (section !== 'whatsapp') return;
+        setWaStatus('checking');
+        api.get<{ connected: boolean }>('/whatsapp/status')
+            .then(r => { setWaStatus(r.data.connected ? 'connected' : 'idle'); })
+            .catch(() => { setWaStatus('idle'); });
+    }, [section]);
 
     const handleCreateManager = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -62,9 +72,12 @@ export const AdminPanel: React.FC<Props> = ({
         setQrCode('');
         const ws = new WebSocket(`ws://localhost:8080/api/ws/whatsapp/qr?token=${localStorage.getItem('token')}`);
         ws.onmessage = (event) => {
-            const data = JSON.parse(event.data);
-            if (data.type === 'qr') setQrCode(data.code);
-            if (data.status === 'connected') setWaStatus('connected');
+            const data = JSON.parse(event.data as string) as { type?: string; code?: string; status?: string };
+            if (data.type === 'qr' && data.code) setQrCode(data.code);
+            if (data.status === 'connected') {
+                setWaStatus('connected');
+                onWAConnected();
+            }
         };
         ws.onerror = () => setWaStatus('idle');
     };
@@ -193,11 +206,21 @@ export const AdminPanel: React.FC<Props> = ({
                 {section === 'whatsapp' && (
                     <PanelSection title="WhatsApp" desc="Привяжите аккаунт для получения и отправки сообщений">
                         <Card style={{ maxWidth: 460 }}>
-                            {waStatus === 'connected' ? (
+                            {waStatus === 'checking' ? (
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, padding: '32px 0', color: c.text2, fontSize: 13 }}>
+                                    <Spinner size={18} /> Проверка статуса...
+                                </div>
+                            ) : waStatus === 'connected' ? (
                                 <div style={{ textAlign: 'center', padding: '24px 0' }}>
                                     <CheckCircle2 size={48} color={c.green} strokeWidth={1.5} style={{ marginBottom: 12 }} />
                                     <p style={{ color: c.green, fontWeight: 700, fontSize: 16, margin: '0 0 6px' }}>WhatsApp подключён</p>
                                     <p style={{ color: c.text2, fontSize: 13, margin: 0 }}>Аккаунт привязан и готов к работе</p>
+                                    <button
+                                        onClick={() => setWaStatus('idle')}
+                                        style={{ ...btn('rgba(255,255,255,0.06)', { border: `1px solid ${c.border}`, color: c.text2, marginTop: 16, padding: '7px 20px' }) }}
+                                    >
+                                        Переподключить
+                                    </button>
                                 </div>
                             ) : waStatus === 'connecting' ? (
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
