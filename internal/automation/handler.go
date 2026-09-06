@@ -329,23 +329,29 @@ func sendWA(ctx context.Context, ruleID int, data map[string]interface{}, client
 		return
 	}
 
-	var jid watypes.JID
-	if strings.HasPrefix(phone, "lid_") {
-		jid = watypes.NewJID(phone[4:], watypes.HiddenUserServer)
-	} else {
-		cleaned := strings.Map(func(r rune) rune {
-			if unicode.IsDigit(r) {
-				return r
-			}
-			return -1
-		}, phone)
-		pn := watypes.NewJID(cleaned, watypes.DefaultUserServer)
-		if lid, err2 := waClient.Store.LIDs.GetLIDForPN(ctx, pn); err2 == nil && !lid.IsEmpty() {
-			jid = lid
-		} else {
-			jid = pn
+	// Always send automation messages to the phone number JID.
+	// LID JIDs (@lid) are for receiving only; sending to them returns error 479.
+	cleaned := strings.Map(func(r rune) rune {
+		if unicode.IsDigit(r) {
+			return r
 		}
+		return -1
+	}, phone)
+	if strings.HasPrefix(phone, "lid_") {
+		// Resolve lid → phone number via the reverse store
+		lid := watypes.NewJID(phone[4:], watypes.HiddenUserServer)
+		pnJID, err2 := waClient.Store.LIDs.GetPNForLID(ctx, lid)
+		if err2 != nil || pnJID.IsEmpty() {
+			log.Printf("[AUTO] cannot resolve lid %s to phone: %v — skipping rule %d", phone, err2, ruleID)
+			return
+		}
+		cleaned = pnJID.User
 	}
+	if cleaned == "" {
+		log.Printf("[AUTO] empty phone for client %d — skipping rule %d", clientID, ruleID)
+		return
+	}
+	jid := watypes.NewJID(cleaned, watypes.DefaultUserServer)
 
 	if _, err := waClient.SendMessage(ctx, jid, &waE2E.Message{Conversation: proto.String(msg)}); err != nil {
 		log.Printf("[AUTO] WA send error rule %d: %v", ruleID, err)
