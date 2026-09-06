@@ -10,6 +10,7 @@ import (
 	"strings"
 	"unicode"
 
+	"crmProject/internal/auth"
 	"crmProject/internal/automation"
 	"crmProject/internal/db"
 
@@ -54,13 +55,31 @@ type LossReasonInput struct {
 }
 
 func GetClients(c *gin.Context) {
-	rows, err := db.DB.Query(`
-		SELECT c.id, c.phone, c.name, c.status,
-		       COALESCE(c.loss_reason,''), COALESCE(c.custom_fields,'{}'),
-		       c.manager_id, c.created_at,
-		       COALESCE(c.stage_changed_at, c.created_at),
-		       (SELECT COUNT(*) FROM tasks t WHERE t.client_id=c.id AND t.completed=0)
-		FROM clients c ORDER BY c.created_at DESC`)
+	role, _ := c.Get("user_role")
+	roleStr, _ := role.(string)
+
+	var rows *sql.Rows
+	var err error
+
+	if auth.HasPermission(roleStr, "view_all") {
+		rows, err = db.DB.Query(`
+			SELECT c.id, c.phone, c.name, c.status,
+			       COALESCE(c.loss_reason,''), COALESCE(c.custom_fields,'{}'),
+			       c.manager_id, c.created_at,
+			       COALESCE(c.stage_changed_at, c.created_at),
+			       (SELECT COUNT(*) FROM tasks t WHERE t.client_id=c.id AND t.completed=0)
+			FROM clients c ORDER BY c.created_at DESC`)
+	} else {
+		userIDRaw, _ := c.Get("user_id")
+		userID := int(userIDRaw.(uint))
+		rows, err = db.DB.Query(`
+			SELECT c.id, c.phone, c.name, c.status,
+			       COALESCE(c.loss_reason,''), COALESCE(c.custom_fields,'{}'),
+			       c.manager_id, c.created_at,
+			       COALESCE(c.stage_changed_at, c.created_at),
+			       (SELECT COUNT(*) FROM tasks t WHERE t.client_id=c.id AND t.completed=0)
+			FROM clients c WHERE c.manager_id=? ORDER BY c.created_at DESC`, userID)
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch clients"})
 		return
@@ -111,6 +130,12 @@ func CreateClient(c *gin.Context) {
 }
 
 func UpdateClientStatus(c *gin.Context) {
+	role, _ := c.Get("user_role")
+	if !auth.HasPermission(role.(string), "edit") {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Нет прав на редактирование сделок"})
+		return
+	}
+
 	clientID := c.Param("id")
 	var input UpdateStatusInput
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -215,11 +240,11 @@ func UpdateClientStatus(c *gin.Context) {
 	}
 
 	userIDRaw, _ := c.Get("user_id")
-	details := "Смена статуса на " + input.Status
+	details := fmt.Sprintf("Клиент id=%s", clientID)
 	if input.LossReason != "" {
 		details += " (Причина: " + input.LossReason + ")"
 	}
-	db.LogAction(userIDRaw.(uint), "UPDATE_CLIENT_STATUS", details)
+	db.LogAction(userIDRaw.(uint), "UPDATE_CLIENT_STATUS", details, currentStatus, input.Status)
 
 	// Fire automation rules for the new stage
 	if cid, err2 := strconv.Atoi(clientID); err2 == nil {
@@ -293,14 +318,25 @@ func UploadClientFile(c *gin.Context) {
 }
 
 func DeleteClient(c *gin.Context) {
+	role, _ := c.Get("user_role")
+	if !auth.HasPermission(role.(string), "delete") {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Нет прав на удаление сделок"})
+		return
+	}
+
 	id := c.Param("id")
+	var clientName, clientPhone, clientStatus string
+	_ = db.DB.QueryRow("SELECT name, phone, status FROM clients WHERE id=?", id).
+		Scan(&clientName, &clientPhone, &clientStatus)
+
 	_, err := db.DB.Exec("DELETE FROM clients WHERE id = ?", id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete client"})
 		return
 	}
 	userIDRaw, _ := c.Get("user_id")
-	db.LogAction(userIDRaw.(uint), "DELETE_CLIENT", "Удаление клиента id="+id)
+	oldVal := fmt.Sprintf("name=%q phone=%q status=%q", clientName, clientPhone, clientStatus)
+	db.LogAction(userIDRaw.(uint), "DELETE_CLIENT", "Удаление клиента id="+id, oldVal, "")
 	c.JSON(http.StatusOK, gin.H{"message": "Client deleted"})
 }
 
@@ -310,6 +346,12 @@ type UpdateClientBasicInput struct {
 }
 
 func UpdateClientBasic(c *gin.Context) {
+	role, _ := c.Get("user_role")
+	if !auth.HasPermission(role.(string), "edit") {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Нет прав на редактирование сделок"})
+		return
+	}
+
 	id := c.Param("id")
 	var input UpdateClientBasicInput
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -320,6 +362,10 @@ func UpdateClientBasic(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "name or phone required"})
 		return
 	}
+
+	// Snapshot current values for audit
+	var oldName, oldPhone string
+	_ = db.DB.QueryRow("SELECT name, phone FROM clients WHERE id=?", id).Scan(&oldName, &oldPhone)
 
 	if input.Name != "" && input.Phone != "" {
 		phone := normalizePhone(input.Phone)
@@ -343,8 +389,19 @@ func UpdateClientBasic(c *gin.Context) {
 		}
 	}
 
+	newName := input.Name
+	if newName == "" {
+		newName = oldName
+	}
+	newPhone := input.Phone
+	if newPhone == "" {
+		newPhone = oldPhone
+	}
+	oldVal := fmt.Sprintf("name=%q phone=%q", oldName, oldPhone)
+	newVal := fmt.Sprintf("name=%q phone=%q", newName, newPhone)
+
 	userIDRaw, _ := c.Get("user_id")
-	db.LogAction(userIDRaw.(uint), "UPDATE_CLIENT", fmt.Sprintf("Редактирование клиента id=%s name=%q phone=%q", id, input.Name, input.Phone))
+	db.LogAction(userIDRaw.(uint), "UPDATE_CLIENT", "Клиент id="+id, oldVal, newVal)
 	c.JSON(http.StatusOK, gin.H{"message": "Client updated"})
 }
 

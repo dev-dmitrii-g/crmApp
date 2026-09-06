@@ -3,14 +3,15 @@ import api from '../../services/api';
 import { QRCodeSVG } from 'qrcode.react';
 import {
     GitBranch, LayoutGrid, Users, MessageCircle, BarChart2,
-    CheckCircle2, UserPlus, Zap,
+    CheckCircle2, UserPlus, Zap, ShieldCheck,
 } from 'lucide-react';
 import { useToast } from '../../hooks/useToast';
 import { Spinner } from '../ui/Spinner';
-import type { Stage, Manager, Analytics, FieldDefinition, FieldStageVisibility } from '../../types';
+import type { Stage, Manager, Analytics, FieldDefinition, FieldStageVisibility, Role } from '../../types';
 import { StageManager } from './StageManager';
 import { FieldConstructor } from './FieldConstructor';
 import { AutomationManager } from './AutomationManager';
+import { RoleMatrix } from './RoleMatrix';
 import { c, inp, btn } from '../../theme';
 
 interface Props {
@@ -24,16 +25,25 @@ interface Props {
     onSLAUpdated: () => void;
 }
 
-type Section = 'pipeline' | 'fields' | 'team' | 'whatsapp' | 'analytics' | 'automation';
+type Section = 'pipeline' | 'fields' | 'team' | 'roles' | 'whatsapp' | 'analytics' | 'automation';
 
 const NAV: { key: Section; Icon: React.FC<{ size?: number; strokeWidth?: number }>; label: string }[] = [
     { key: 'pipeline', Icon: GitBranch, label: 'Воронка продаж' },
     { key: 'fields', Icon: LayoutGrid, label: 'Поля карточки' },
     { key: 'automation', Icon: Zap, label: 'Автоматизация' },
     { key: 'team', Icon: Users, label: 'Сотрудники' },
+    { key: 'roles', Icon: ShieldCheck, label: 'Роли и права' },
     { key: 'whatsapp', Icon: MessageCircle, label: 'WhatsApp' },
     { key: 'analytics', Icon: BarChart2, label: 'Аналитика' },
 ];
+
+const ROLE_COLORS: Record<string, string> = {
+    admin: c.blue,
+    head: c.purple,
+    manager: c.green,
+    accountant: c.amber,
+    observer: c.text2,
+};
 
 export const AdminPanel: React.FC<Props> = ({
     stages, fieldDefinitions, fieldVisibility, managers, analytics, onRefresh, onWAConnected, onSLAUpdated,
@@ -46,10 +56,30 @@ export const AdminPanel: React.FC<Props> = ({
     const [newMgrPass, setNewMgrPass] = useState('');
     const [savingManager, setSavingManager] = useState(false);
 
+    const [roles, setRoles] = useState<Role[]>([]);
+    const [loadingRoles, setLoadingRoles] = useState(false);
+
+    // Per-user loading state for role change / block / revoke
+    const [userBusy, setUserBusy] = useState<Record<number, string>>({});
+
     const [qrCode, setQrCode] = useState('');
     const [waStatus, setWaStatus] = useState<'idle' | 'checking' | 'connecting' | 'connected'>('idle');
 
-    // Check WA status when the WhatsApp section is opened
+    const fetchRoles = async () => {
+        setLoadingRoles(true);
+        try {
+            const r = await api.get<Role[]>('/admin/roles');
+            setRoles(r.data || []);
+        } catch { /* ignore */ }
+        finally { setLoadingRoles(false); }
+    };
+
+    useEffect(() => {
+        if (section === 'team' || section === 'roles') {
+            void fetchRoles();
+        }
+    }, [section]);
+
     useEffect(() => {
         if (section !== 'whatsapp') return;
         setWaStatus('checking');
@@ -68,6 +98,38 @@ export const AdminPanel: React.FC<Props> = ({
             onRefresh();
         } catch { toast.error('Ошибка при создании — такой email уже занят'); }
         finally { setSavingManager(false); }
+    };
+
+    const handleSetRole = async (id: number, role: string) => {
+        setUserBusy(p => ({ ...p, [id]: 'role' }));
+        try {
+            await api.patch(`/admin/managers/${id}/role`, { role });
+            toast.success('Роль обновлена');
+            onRefresh();
+        } catch { toast.error('Ошибка при смене роли'); }
+        finally { setUserBusy(p => ({ ...p, [id]: '' })); }
+    };
+
+    const handleToggleActive = async (id: number, isActive: boolean) => {
+        setUserBusy(p => ({ ...p, [id]: 'active' }));
+        try {
+            await api.patch(`/admin/managers/${id}/active`, { is_active: !isActive });
+            toast.success(isActive ? 'Пользователь заблокирован' : 'Пользователь активирован');
+            onRefresh();
+        } catch (err: unknown) {
+            const e = err as { response?: { data?: { error?: string } } };
+            toast.error(e?.response?.data?.error ?? 'Ошибка');
+        }
+        finally { setUserBusy(p => ({ ...p, [id]: '' })); }
+    };
+
+    const handleRevoke = async (id: number, name: string) => {
+        setUserBusy(p => ({ ...p, [id]: 'revoke' }));
+        try {
+            await api.post(`/admin/managers/${id}/revoke`, {});
+            toast.success(`Сессии ${name} отозваны`);
+        } catch { toast.error('Ошибка'); }
+        finally { setUserBusy(p => ({ ...p, [id]: '' })); }
     };
 
     const connectWA = () => {
@@ -153,31 +215,83 @@ export const AdminPanel: React.FC<Props> = ({
                 )}
 
                 {section === 'team' && (
-                    <PanelSection title="Сотрудники" desc="Добавляйте менеджеров и управляйте доступом">
+                    <PanelSection title="Сотрудники" desc="Управляйте ролями, блокировкой и сессиями сотрудников">
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 20, alignItems: 'start' }}>
                             <Card>
                                 <div style={{ overflowX: 'auto' }}>
                                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                                         <thead>
                                             <tr style={{ background: 'rgba(255,255,255,0.03)' }}>
-                                                {['ID', 'Имя', 'Email', 'Роль'].map(h => <Th key={h}>{h}</Th>)}
+                                                {['Сотрудник', 'Роль', 'Статус', 'Действия'].map(h => <Th key={h}>{h}</Th>)}
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {managers.map(m => (
-                                                <tr key={m.id} style={{ borderTop: `1px solid ${c.border}` }}>
-                                                    <Td dim>{m.id}</Td>
-                                                    <Td><strong style={{ color: c.text1 }}>{m.name}</strong></Td>
-                                                    <Td dim>{m.email}</Td>
-                                                    <Td>
-                                                        <span style={{
-                                                            background: m.role === 'admin' ? 'rgba(59,130,246,0.14)' : 'rgba(255,255,255,0.06)',
-                                                            color: m.role === 'admin' ? c.blue : c.text2,
-                                                            padding: '2px 9px', borderRadius: 6, fontSize: 11, fontWeight: 600,
-                                                        }}>{m.role}</span>
-                                                    </Td>
-                                                </tr>
-                                            ))}
+                                            {managers.map(m => {
+                                                const busy = userBusy[m.id] ?? '';
+                                                return (
+                                                    <tr key={m.id} style={{ borderTop: `1px solid ${c.border}` }}>
+                                                        <Td>
+                                                            <div>
+                                                                <strong style={{ color: c.text1 }}>{m.name}</strong>
+                                                                <div style={{ color: c.text3, fontSize: 11 }}>{m.email}</div>
+                                                            </div>
+                                                        </Td>
+                                                        <Td>
+                                                            {loadingRoles ? (
+                                                                <span style={{ color: c.text3, fontSize: 12 }}>{m.role}</span>
+                                                            ) : (
+                                                                <select
+                                                                    value={m.role}
+                                                                    disabled={m.id === 1 || busy === 'role'}
+                                                                    onChange={e => { void handleSetRole(m.id, e.target.value); }}
+                                                                    style={{
+                                                                        background: 'rgba(255,255,255,0.05)',
+                                                                        border: `1px solid ${c.border}`,
+                                                                        borderRadius: 7,
+                                                                        color: ROLE_COLORS[m.role] ?? c.text1,
+                                                                        fontSize: 12,
+                                                                        fontWeight: 600,
+                                                                        padding: '3px 8px',
+                                                                        cursor: m.id === 1 ? 'default' : 'pointer',
+                                                                    }}
+                                                                >
+                                                                    {roles.map(r => (
+                                                                        <option key={r.code} value={r.code}>{r.name}</option>
+                                                                    ))}
+                                                                </select>
+                                                            )}
+                                                        </Td>
+                                                        <Td>
+                                                            <span style={{
+                                                                background: m.is_active ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.12)',
+                                                                color: m.is_active ? c.green : '#f87171',
+                                                                padding: '2px 9px', borderRadius: 6, fontSize: 11, fontWeight: 600,
+                                                            }}>
+                                                                {m.is_active ? 'Активен' : 'Заблокирован'}
+                                                            </span>
+                                                        </Td>
+                                                        <Td>
+                                                            <div style={{ display: 'flex', gap: 6 }}>
+                                                                {m.id !== 1 && (
+                                                                    <ActionBtn
+                                                                        loading={busy === 'active'}
+                                                                        danger={m.is_active}
+                                                                        onClick={() => { void handleToggleActive(m.id, m.is_active); }}
+                                                                    >
+                                                                        {m.is_active ? 'Блок' : 'Разблок'}
+                                                                    </ActionBtn>
+                                                                )}
+                                                                <ActionBtn
+                                                                    loading={busy === 'revoke'}
+                                                                    onClick={() => { void handleRevoke(m.id, m.name); }}
+                                                                >
+                                                                    Сессии ✕
+                                                                </ActionBtn>
+                                                            </div>
+                                                        </Td>
+                                                    </tr>
+                                                );
+                                            })}
                                             {managers.length === 0 && (
                                                 <tr><td colSpan={4} style={{ padding: 24, textAlign: 'center', color: c.text3 }}>Нет сотрудников</td></tr>
                                             )}
@@ -209,6 +323,18 @@ export const AdminPanel: React.FC<Props> = ({
                                 </form>
                             </Card>
                         </div>
+                    </PanelSection>
+                )}
+
+                {section === 'roles' && (
+                    <PanelSection title="Роли и права" desc="Настройте матрицу прав доступа для каждой роли">
+                        {loadingRoles ? (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: c.text2, fontSize: 13 }}>
+                                <Spinner size={16} /> Загрузка...
+                            </div>
+                        ) : (
+                            <RoleMatrix roles={roles} onSaved={fetchRoles} />
+                        )}
                     </PanelSection>
                 )}
 
@@ -281,15 +407,24 @@ export const AdminPanel: React.FC<Props> = ({
                                 <div>
                                     <p style={{ margin: '0 0 12px', fontSize: 11, fontWeight: 700, color: c.text3, textTransform: 'uppercase', letterSpacing: '0.07em' }}>Журнал событий</p>
                                     <Card style={{ padding: 0 }}>
-                                        <div style={{ maxHeight: 360, overflowY: 'auto' }}>
+                                        <div style={{ maxHeight: 400, overflowY: 'auto' }}>
                                             {(analytics.recent_activity || []).map((log, i) => (
-                                                <div key={log.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 16px', borderBottom: i < analytics.recent_activity.length - 1 ? `1px solid ${c.border}` : 'none' }}>
-                                                    <div style={{ fontSize: 13, minWidth: 0 }}>
-                                                        <span style={{ color: c.blue, fontWeight: 600 }}>{log.user_name}</span>
-                                                        <span style={{ color: c.text1 }}> {log.action}</span>
-                                                        {log.details && <span style={{ color: c.text3 }}> ({log.details})</span>}
+                                                <div key={log.id} style={{ padding: '10px 16px', borderBottom: i < analytics.recent_activity.length - 1 ? `1px solid ${c.border}` : 'none' }}>
+                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                                                        <div style={{ fontSize: 13 }}>
+                                                            <span style={{ color: c.blue, fontWeight: 600 }}>{log.user_name}</span>
+                                                            <span style={{ color: c.text1 }}> {log.action}</span>
+                                                            {log.details && <span style={{ color: c.text3 }}> — {log.details}</span>}
+                                                        </div>
+                                                        <span style={{ fontSize: 11, color: c.text3, flexShrink: 0, marginLeft: 16, whiteSpace: 'nowrap' }}>{log.timestamp}</span>
                                                     </div>
-                                                    <span style={{ fontSize: 11, color: c.text3, flexShrink: 0, marginLeft: 16, whiteSpace: 'nowrap' }}>{log.timestamp}</span>
+                                                    {(log.old_value || log.new_value) && (
+                                                        <div style={{ fontSize: 11, marginTop: 4, display: 'flex', gap: 6, alignItems: 'center' }}>
+                                                            {log.old_value && <span style={{ color: '#f87171', background: 'rgba(239,68,68,0.08)', padding: '1px 6px', borderRadius: 4 }}>{log.old_value}</span>}
+                                                            {log.old_value && log.new_value && <span style={{ color: c.text3 }}>→</span>}
+                                                            {log.new_value && <span style={{ color: c.green, background: 'rgba(16,185,129,0.08)', padding: '1px 6px', borderRadius: 4 }}>{log.new_value}</span>}
+                                                        </div>
+                                                    )}
                                                 </div>
                                             ))}
                                             {(!analytics.recent_activity || analytics.recent_activity.length === 0) && (
@@ -342,4 +477,26 @@ const FormField: React.FC<{ label: string; children: React.ReactNode }> = ({ lab
         <div style={{ fontSize: 12, fontWeight: 600, color: c.text2, marginBottom: 5 }}>{label}</div>
         {children}
     </div>
+);
+
+const ActionBtn: React.FC<{ children: React.ReactNode; onClick: () => void; loading?: boolean; danger?: boolean }> = ({ children, onClick, loading, danger }) => (
+    <button
+        onClick={onClick}
+        disabled={loading}
+        style={{
+            padding: '4px 10px',
+            fontSize: 11,
+            fontWeight: 600,
+            border: `1px solid ${danger ? 'rgba(239,68,68,0.3)' : c.border}`,
+            borderRadius: 7,
+            background: danger ? 'rgba(239,68,68,0.1)' : 'rgba(255,255,255,0.05)',
+            color: danger ? '#f87171' : c.text2,
+            cursor: loading ? 'default' : 'pointer',
+            opacity: loading ? 0.6 : 1,
+            display: 'flex', alignItems: 'center', gap: 4,
+        }}
+    >
+        {loading ? <Spinner size={11} /> : null}
+        {children}
+    </button>
 );

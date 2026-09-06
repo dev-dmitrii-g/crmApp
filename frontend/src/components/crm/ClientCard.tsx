@@ -333,7 +333,7 @@ export const ClientCard: React.FC<Props> = ({
         borderRadius: 6, marginBottom: 6,
     };
 
-    const iconBtn = (hoverColor: string): React.CSSProperties => ({
+    const iconBtn = (_hoverColor: string): React.CSSProperties => ({
         background: 'none', border: 'none', cursor: 'pointer',
         color: c.text3, padding: 6, borderRadius: 6,
         display: 'flex', alignItems: 'center', transition: 'color 0.15s',

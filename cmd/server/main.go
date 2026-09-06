@@ -124,6 +124,13 @@ func main() {
 		{
 			adminGroup.GET("/managers", admin.GetManagers)
 			adminGroup.POST("/managers", admin.CreateManager)
+			adminGroup.PATCH("/managers/:id/role", admin.SetRole)
+			adminGroup.PATCH("/managers/:id/active", admin.ToggleActive)
+			adminGroup.POST("/managers/:id/revoke", admin.RevokeTokens)
+
+			adminGroup.GET("/roles", admin.GetRoles)
+			adminGroup.PUT("/roles/:code/permissions", admin.UpdateRolePermissions)
+
 			adminGroup.GET("/analytics", admin.GetAnalytics)
 
 			adminGroup.POST("/pipeline/stages", pipeline.CreateStage)

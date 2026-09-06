@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Plus, Trash2, Zap, Clock, ToggleLeft, ToggleRight, ChevronDown, ChevronUp } from 'lucide-react';
+import { Plus, Trash2, Zap, Clock, ToggleLeft, ToggleRight, ChevronUp } from 'lucide-react';
 import api from '../../services/api';
 import { useToast } from '../../hooks/useToast';
 import { Spinner } from '../ui/Spinner';

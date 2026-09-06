@@ -37,7 +37,14 @@ export interface Manager {
     name: string;
     email: string;
     role: string;
+    is_active: boolean;
     created_at: string;
+}
+
+export interface Role {
+    code: string;
+    name: string;
+    permissions: Record<string, number>;
 }
 
 export interface Analytics {
@@ -55,6 +62,8 @@ export interface Analytics {
         user_name: string;
         action: string;
         details: string;
+        old_value: string;
+        new_value: string;
         timestamp: string;
     }[];
 }
