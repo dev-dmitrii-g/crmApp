@@ -406,8 +406,8 @@ const ClientCardItem: React.FC<CardItemProps> = ({ client, slaSettings, waConnec
                         </div>
                     )}
 
-                    {/* SLA + tasks footer */}
-                    {(showSLA || (client.open_tasks_count ?? 0) > 0) && (
+                    {/* SLA + tasks + messages footer */}
+                    {(showSLA || (client.open_tasks_count ?? 0) > 0 || (client.incoming_count ?? 0) > 0 || !client.has_outgoing) && (
                         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 7 }}>
                             {showSLA && (
                                 <span style={{
@@ -432,6 +432,34 @@ const ClientCardItem: React.FC<CardItemProps> = ({ client, slaSettings, waConnec
                                 }}>
                                     <CheckSquare size={9} strokeWidth={2.5} />
                                     {client.open_tasks_count}
+                                </span>
+                            )}
+                            {/* Message count — amber if unanswered, subtle if replied */}
+                            {(client.incoming_count ?? 0) > 0 && (
+                                <span style={{
+                                    display: 'inline-flex', alignItems: 'center', gap: 3,
+                                    fontSize: 10, fontWeight: 600,
+                                    background: !client.has_outgoing ? 'rgba(245,158,11,0.14)' : 'rgba(255,255,255,0.06)',
+                                    color: !client.has_outgoing ? c.amber : c.text3,
+                                    border: `1px solid ${!client.has_outgoing ? 'rgba(245,158,11,0.35)' : c.border}`,
+                                    padding: '2px 7px', borderRadius: 99,
+                                }}>
+                                    <MessageCircle size={9} strokeWidth={2.5} />
+                                    {client.incoming_count}
+                                    {!client.has_outgoing && ' · нет ответа'}
+                                </span>
+                            )}
+                            {/* New client — never contacted, no messages */}
+                            {(client.incoming_count ?? 0) === 0 && !client.has_outgoing && (
+                                <span style={{
+                                    display: 'inline-flex', alignItems: 'center', gap: 3,
+                                    fontSize: 10, fontWeight: 700,
+                                    background: 'rgba(16,185,129,0.1)', color: c.green,
+                                    border: '1px solid rgba(16,185,129,0.25)',
+                                    padding: '2px 7px', borderRadius: 99,
+                                    letterSpacing: '0.04em',
+                                }}>
+                                    Новый
                                 </span>
                             )}
                         </div>

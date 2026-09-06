@@ -9,6 +9,8 @@ export interface Client {
     created_at?: string;
     stage_changed_at?: string;
     open_tasks_count?: number;
+    incoming_count?: number;
+    has_outgoing?: boolean;
 }
 
 export interface Stage {

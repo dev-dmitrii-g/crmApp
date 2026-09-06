@@ -37,6 +37,8 @@ type Client struct {
 	CreatedAt      string            `json:"created_at"`
 	StageChangedAt string            `json:"stage_changed_at"`
 	OpenTasksCount int               `json:"open_tasks_count"`
+	IncomingCount  int               `json:"incoming_count"`
+	HasOutgoing    bool              `json:"has_outgoing"`
 }
 
 type CreateClientInput struct {
@@ -114,7 +116,9 @@ func GetClients(c *gin.Context) {
 		       COALESCE(c.loss_reason,''), COALESCE(c.custom_fields,'{}'),
 		       c.manager_id, c.created_at,
 		       COALESCE(c.stage_changed_at, c.created_at),
-		       (SELECT COUNT(*) FROM tasks t WHERE t.client_id=c.id AND t.completed=0)
+		       (SELECT COUNT(*) FROM tasks t WHERE t.client_id=c.id AND t.completed=0),
+		       (SELECT COUNT(*) FROM messages m WHERE m.client_id=c.id AND m.is_outgoing=0),
+		       CASE WHEN EXISTS(SELECT 1 FROM messages m WHERE m.client_id=c.id AND m.is_outgoing=1) THEN 1 ELSE 0 END
 		FROM clients c %s ORDER BY c.created_at DESC`, where), args...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch clients"})
@@ -127,10 +131,13 @@ func GetClients(c *gin.Context) {
 		var cli Client
 		var customFieldsJSON string
 		var managerID sql.NullInt32
+		var hasOutgoingInt int
 		if err := rows.Scan(&cli.ID, &cli.Phone, &cli.Name, &cli.Status, &cli.LossReason, &customFieldsJSON,
-			&managerID, &cli.CreatedAt, &cli.StageChangedAt, &cli.OpenTasksCount); err != nil {
+			&managerID, &cli.CreatedAt, &cli.StageChangedAt, &cli.OpenTasksCount,
+			&cli.IncomingCount, &hasOutgoingInt); err != nil {
 			continue
 		}
+		cli.HasOutgoing = hasOutgoingInt == 1
 		if managerID.Valid {
 			mID := int(managerID.Int32)
 			cli.ManagerID = &mID
