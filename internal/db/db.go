@@ -11,10 +11,15 @@ import (
 var DB *sql.DB
 
 func InitDB(dbPath string) (*sql.DB, error) {
-	database, err := sql.Open("sqlite3", dbPath)
+	// _busy_timeout retries writes for up to 5 s before returning SQLITE_BUSY.
+	// _journal=WAL allows concurrent readers while a writer is active.
+	dsn := dbPath + "?_busy_timeout=5000&_journal=WAL&_foreign_keys=on"
+	database, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
+	// SQLite is single-writer; keep one writer connection to avoid SQLITE_BUSY.
+	database.SetMaxOpenConns(1)
 
 	if err := database.Ping(); err != nil {
 		return nil, fmt.Errorf("failed to ping database: %w", err)

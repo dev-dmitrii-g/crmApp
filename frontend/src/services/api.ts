@@ -13,6 +13,7 @@ api.interceptors.request.use((config) => {
 });
 
 // On 401 (expired or revoked session) — clear auth and reload to login screen.
+// 503 means DB temporarily busy — do NOT log out, just let the request fail.
 api.interceptors.response.use(
     res => res,
     err => {

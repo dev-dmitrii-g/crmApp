@@ -2,6 +2,7 @@ package auth
 
 import (
 	"crmProject/internal/db"
+	"database/sql"
 	"errors"
 	"net/http"
 	"strings"
@@ -66,8 +67,14 @@ func checkUserActive(c *gin.Context, claims *Claims) bool {
 	err := db.DB.QueryRow(
 		"SELECT is_active, token_version, role FROM users WHERE id=?", claims.UserID,
 	).Scan(&isActive, &dbVersion, &dbRole)
-	if err != nil {
+	if err == sql.ErrNoRows {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not found"})
+		c.Abort()
+		return false
+	}
+	if err != nil {
+		// DB temporarily unavailable (busy, locked) — do not log the user out.
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Service temporarily unavailable, retry"})
 		c.Abort()
 		return false
 	}

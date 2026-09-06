@@ -26,7 +26,7 @@ func main() {
 	}
 	defer database.Close()
 
-	waMgr, err := whatsapp.InitWAManager(context.Background(), "./crm.db")
+	waMgr, err := whatsapp.InitWAManager(context.Background(), "./wa.db")
 	if err != nil {
 		log.Fatalf("WhatsApp Manager init error: %v", err)
 	}
