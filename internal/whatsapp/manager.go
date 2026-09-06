@@ -55,6 +55,34 @@ func InitWAManager(ctx context.Context, dbPath string) (*Manager, error) {
 	return mgr, nil
 }
 
+// ResetSession disconnects the client and wipes its stored device credentials
+// so that a fresh QR pairing can be started. Safe to call even if no session exists.
+func (m *Manager) ResetSession(userID uint) {
+	m.clientsMu.Lock()
+	client := m.clients[userID]
+	delete(m.clients, userID)
+	// Also remove from any other userID alias pointing to the same client.
+	for k, v := range m.clients {
+		if v == client {
+			delete(m.clients, k)
+		}
+	}
+	m.clientsMu.Unlock()
+
+	if client == nil {
+		return
+	}
+	if client.IsConnected() {
+		client.Disconnect()
+	}
+	if client.Store != nil {
+		if err := client.Store.Delete(context.Background()); err != nil {
+			log.Printf("[WA] ResetSession store.Delete: %v", err)
+		}
+	}
+	log.Printf("[WA] Session reset for user %d", userID)
+}
+
 // IsConnected returns true when any WhatsApp session is live.
 func (m *Manager) IsConnected() bool {
 	m.clientsMu.RLock()

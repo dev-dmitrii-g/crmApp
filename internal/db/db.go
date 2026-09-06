@@ -31,7 +31,7 @@ func InitDB(dbPath string) (*sql.DB, error) {
 	// Safe migrations for existing databases
 	_, _ = database.Exec("ALTER TABLE pipeline_stages ADD COLUMN is_success BOOLEAN DEFAULT FALSE")
 	_, _ = database.Exec("ALTER TABLE clients ADD COLUMN custom_fields TEXT DEFAULT '{}'")
-	_, _ = database.Exec("ALTER TABLE clients ADD COLUMN stage_changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+	_, _ = database.Exec("ALTER TABLE clients ADD COLUMN stage_changed_at TIMESTAMP DEFAULT NULL")
 
 	_, _ = database.Exec(`
 		INSERT OR IGNORE INTO pipeline_stages (name, code, color, sort_order, is_system, is_fail) VALUES 

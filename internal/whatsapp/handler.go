@@ -2,6 +2,7 @@ package whatsapp
 
 import (
 	"context"
+	"log"
 	"net/http"
 
 	"crmProject/internal/auth"
@@ -48,31 +49,49 @@ func HandleQRWebSocket(c *gin.Context) {
 		return
 	}
 
+	// Already live — nothing to do.
 	if client.IsConnected() && client.IsLoggedIn() {
 		_ = ws.WriteJSON(gin.H{"type": "status", "status": "connected"})
 		return
 	}
 
+	// Try to get a QR channel. This fails when the client still holds a stale
+	// device ID from a previous (now-expired) session.
 	qrChan, err := client.GetQRChannel(ctx)
 	if err != nil {
-		_ = ws.WriteJSON(gin.H{"type": "error", "message": "Failed to get QR channel"})
-		return
+		log.Printf("[WA-QR] GetQRChannel failed (%v) — resetting stale session", err)
+		// Wipe the old session so whatsmeow treats this as a fresh device.
+		WAManager.ResetSession(userID)
+		// Get a brand-new client (no stored credentials).
+		client, err = WAManager.GetClient(ctx, userID)
+		if err != nil {
+			_ = ws.WriteJSON(gin.H{"type": "error", "message": "Failed to create WA client"})
+			return
+		}
+		qrChan, err = client.GetQRChannel(ctx)
+		if err != nil {
+			_ = ws.WriteJSON(gin.H{"type": "error", "message": "QR unavailable: " + err.Error()})
+			return
+		}
 	}
 
 	if !client.IsConnected() {
-		err = client.Connect()
-		if err != nil {
-			_ = ws.WriteJSON(gin.H{"type": "error", "message": "Failed to connect to WhatsApp"})
+		if err = client.Connect(); err != nil {
+			_ = ws.WriteJSON(gin.H{"type": "error", "message": "Failed to connect: " + err.Error()})
 			return
 		}
 	}
 
 	for evt := range qrChan {
-		if evt.Event == "code" {
+		switch evt.Event {
+		case "code":
 			_ = ws.WriteJSON(gin.H{"type": "qr", "code": evt.Code})
-		} else if evt.Event == "success" {
+		case "success":
 			_ = ws.WriteJSON(gin.H{"type": "status", "status": "connected"})
-			break
+			return
+		case "timeout":
+			_ = ws.WriteJSON(gin.H{"type": "error", "message": "QR timed out — попробуйте снова"})
+			return
 		}
 	}
 }
