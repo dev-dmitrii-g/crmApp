@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crmProject/internal/admin"
+	"crmProject/internal/automation"
 	"crmProject/internal/chat"
 	"crmProject/internal/contacts"
 	"crmProject/internal/crm"
@@ -32,6 +33,9 @@ func main() {
 
 	waMgr.OnMessageRecv = chat.BroadcastMessage
 	waMgr.AutoConnectSessions(context.Background())
+
+	automation.SetWAManager(waMgr)
+	go automation.RunSLAChecker(context.Background())
 
 	r := gin.Default()
 
@@ -97,6 +101,15 @@ func main() {
 		api.GET("/messages", chat.GetMessages)
 		api.POST("/messages/send", chat.SendMessage)
 
+		// Tasks (all managers)
+		api.GET("/automation/tasks", automation.GetTasks)
+		api.POST("/automation/tasks", automation.CreateTask)
+		api.PATCH("/automation/tasks/:id", automation.UpdateTask)
+		api.DELETE("/automation/tasks/:id", automation.DeleteTask)
+
+		// SLA read (all managers need this for Kanban display)
+		api.GET("/automation/sla", automation.GetSLA)
+
 		// Pipeline (read-only for all)
 		api.GET("/pipeline/stages", auth.JWTAuthMiddleware(), pipeline.GetStages)
 		api.GET("/pipeline/transition-rules", auth.JWTAuthMiddleware(), pipeline.GetTransitionRules)
@@ -131,6 +144,15 @@ func main() {
 
 			adminGroup.POST("/crm/loss-reasons", crm.CreateLossReason)
 			adminGroup.DELETE("/crm/loss-reasons/:id", crm.DeleteLossReason)
+
+			// Automation rules (admin only)
+			adminGroup.GET("/automation/rules", automation.GetRules)
+			adminGroup.POST("/automation/rules", automation.CreateRule)
+			adminGroup.PATCH("/automation/rules/:id", automation.UpdateRule)
+			adminGroup.DELETE("/automation/rules/:id", automation.DeleteRule)
+
+			// SLA write (admin only)
+			adminGroup.PUT("/automation/sla", automation.UpsertSLA)
 		}
 	}
 

@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"unicode"
 
+	"crmProject/internal/automation"
 	"crmProject/internal/db"
 
 	"github.com/gin-gonic/gin"
@@ -24,14 +26,16 @@ func normalizePhone(p string) string {
 }
 
 type Client struct {
-	ID           int               `json:"id"`
-	Phone        string            `json:"phone"`
-	Name         string            `json:"name"`
-	Status       string            `json:"status"`
-	LossReason   string            `json:"loss_reason"`
-	CustomFields map[string]string `json:"custom_fields"`
-	ManagerID    *int              `json:"manager_id"`
-	CreatedAt    string            `json:"created_at"`
+	ID             int               `json:"id"`
+	Phone          string            `json:"phone"`
+	Name           string            `json:"name"`
+	Status         string            `json:"status"`
+	LossReason     string            `json:"loss_reason"`
+	CustomFields   map[string]string `json:"custom_fields"`
+	ManagerID      *int              `json:"manager_id"`
+	CreatedAt      string            `json:"created_at"`
+	StageChangedAt string            `json:"stage_changed_at"`
+	OpenTasksCount int               `json:"open_tasks_count"`
 }
 
 type CreateClientInput struct {
@@ -51,8 +55,12 @@ type LossReasonInput struct {
 
 func GetClients(c *gin.Context) {
 	rows, err := db.DB.Query(`
-		SELECT id, phone, name, status, COALESCE(loss_reason,''), COALESCE(custom_fields,'{}'), manager_id, created_at
-		FROM clients ORDER BY created_at DESC`)
+		SELECT c.id, c.phone, c.name, c.status,
+		       COALESCE(c.loss_reason,''), COALESCE(c.custom_fields,'{}'),
+		       c.manager_id, c.created_at,
+		       COALESCE(c.stage_changed_at, c.created_at),
+		       (SELECT COUNT(*) FROM tasks t WHERE t.client_id=c.id AND t.completed=0)
+		FROM clients c ORDER BY c.created_at DESC`)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch clients"})
 		return
@@ -64,7 +72,8 @@ func GetClients(c *gin.Context) {
 		var cli Client
 		var customFieldsJSON string
 		var managerID sql.NullInt32
-		if err := rows.Scan(&cli.ID, &cli.Phone, &cli.Name, &cli.Status, &cli.LossReason, &customFieldsJSON, &managerID, &cli.CreatedAt); err != nil {
+		if err := rows.Scan(&cli.ID, &cli.Phone, &cli.Name, &cli.Status, &cli.LossReason, &customFieldsJSON,
+			&managerID, &cli.CreatedAt, &cli.StageChangedAt, &cli.OpenTasksCount); err != nil {
 			continue
 		}
 		if managerID.Valid {
@@ -197,7 +206,8 @@ func UpdateClientStatus(c *gin.Context) {
 		_, _ = db.DB.Exec("UPDATE clients SET custom_fields = ? WHERE id = ?", string(merged), clientID)
 	}
 
-	_, err := db.DB.Exec("UPDATE clients SET status = ?, loss_reason = ? WHERE id = ?",
+	_, err := db.DB.Exec(
+		"UPDATE clients SET status=?, loss_reason=?, stage_changed_at=CURRENT_TIMESTAMP WHERE id=?",
 		input.Status, input.LossReason, clientID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update status"})
@@ -210,6 +220,13 @@ func UpdateClientStatus(c *gin.Context) {
 		details += " (Причина: " + input.LossReason + ")"
 	}
 	db.LogAction(userIDRaw.(uint), "UPDATE_CLIENT_STATUS", details)
+
+	// Fire automation rules for the new stage
+	if cid, err2 := strconv.Atoi(clientID); err2 == nil {
+		var cPhone, cName string
+		_ = db.DB.QueryRow("SELECT phone, name FROM clients WHERE id=?", cid).Scan(&cPhone, &cName)
+		automation.RunRulesAsync(cid, input.Status, cPhone, cName)
+	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Status updated"})
 }

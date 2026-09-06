@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { GripVertical, FileText, MessageCircle, X, Check } from 'lucide-react';
-import type { Stage, Client, TransitionRule, StageRequiredField, LossReason } from '../../types';
+import { GripVertical, FileText, MessageCircle, X, Check, Clock, CheckSquare } from 'lucide-react';
+import type { Stage, Client, TransitionRule, StageRequiredField, LossReason, SLASetting } from '../../types';
 import { c } from '../../theme';
 import { useToast } from '../../hooks/useToast';
 import { SkeletonColumn } from '../ui/Skeleton';
@@ -12,6 +12,7 @@ interface Props {
     transitionRules: TransitionRule[];
     stageRequiredFields: StageRequiredField[];
     lossReasons: LossReason[];
+    slaSettings?: SLASetting[];
     isAdmin: boolean;
     loading?: boolean;
     waConnected?: boolean;
@@ -29,7 +30,7 @@ interface RequiredFieldsModal {
 }
 
 export const KanbanBoard: React.FC<Props> = ({
-    stages, clients, transitionRules, stageRequiredFields, lossReasons,
+    stages, clients, transitionRules, stageRequiredFields, lossReasons, slaSettings,
     isAdmin, loading, waConnected, onOpenChat, onOpenCard, onUpdateStatus, onReorderStages,
 }) => {
     const toast = useToast();
@@ -240,6 +241,7 @@ export const KanbanBoard: React.FC<Props> = ({
                                 <ClientCardItem
                                     key={client.id}
                                     client={client}
+                                    slaSettings={slaSettings}
                                     waConnected={waConnected}
                                     onOpenChat={() => onOpenChat(client)}
                                     onOpenCard={() => onOpenCard(client)}
@@ -327,6 +329,7 @@ export const KanbanBoard: React.FC<Props> = ({
 
 interface CardItemProps {
     client: Client;
+    slaSettings?: SLASetting[];
     waConnected?: boolean;
     onOpenChat: () => void;
     onOpenCard: () => void;
@@ -334,11 +337,30 @@ interface CardItemProps {
     onDragEnd: () => void;
 }
 
-const ClientCardItem: React.FC<CardItemProps> = ({ client, waConnected, onOpenChat, onOpenCard, onDragStart, onDragEnd }) => {
+function hoursAgo(ts: string): number {
+    const diff = Date.now() - new Date(ts).getTime();
+    return Math.floor(diff / 3_600_000);
+}
+
+function fmtDuration(h: number): string {
+    if (h < 24) return `${h} ч`;
+    const d = Math.floor(h / 24);
+    return `${d} д ${h % 24} ч`;
+}
+
+const ClientCardItem: React.FC<CardItemProps> = ({ client, slaSettings, waConnected, onOpenChat, onOpenCard, onDragStart, onDragEnd }) => {
     const toast = useToast();
     const [hovered, setHovered] = useState(false);
 
     const customEntries = Object.entries(client.custom_fields ?? {}).filter(([, v]) => v);
+
+    // SLA calculation
+    const sla = slaSettings?.find(s => s.stage_code === client.status);
+    const hoursInStage = client.stage_changed_at ? hoursAgo(client.stage_changed_at) : 0;
+    const slaCrit = sla && sla.crit_hours > 0 && hoursInStage >= sla.crit_hours;
+    const slaWarn = !slaCrit && sla && sla.warn_hours > 0 && hoursInStage >= sla.warn_hours;
+    const slaColor = slaCrit ? c.red : slaWarn ? c.amber : null;
+    const showSLA = slaColor !== null;
 
     return (
         <div
@@ -349,7 +371,11 @@ const ClientCardItem: React.FC<CardItemProps> = ({ client, waConnected, onOpenCh
             onMouseLeave={() => setHovered(false)}
             style={{
                 background: hovered ? c.bgHover : c.bgElevated,
-                border: `1px solid ${hovered ? c.borderMd : c.border}`,
+                border: slaCrit
+                    ? `1px solid ${c.red}50`
+                    : slaWarn
+                        ? `1px solid ${c.amber}40`
+                        : `1px solid ${hovered ? c.borderMd : c.border}`,
                 borderRadius: 10,
                 padding: '11px 12px',
                 cursor: 'grab',
@@ -359,7 +385,6 @@ const ClientCardItem: React.FC<CardItemProps> = ({ client, waConnected, onOpenCh
             }}
         >
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-                {/* drag handle hint */}
                 <GripVertical size={14} color={c.text3} strokeWidth={1.8} style={{ flexShrink: 0, cursor: 'grab', opacity: hovered ? 1 : 0.35, transition: 'opacity 0.15s' }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: 600, fontSize: 13, color: c.text1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -378,6 +403,37 @@ const ClientCardItem: React.FC<CardItemProps> = ({ client, waConnected, onOpenCh
                                     {k}: {v}
                                 </span>
                             ))}
+                        </div>
+                    )}
+
+                    {/* SLA + tasks footer */}
+                    {(showSLA || (client.open_tasks_count ?? 0) > 0) && (
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 7 }}>
+                            {showSLA && (
+                                <span style={{
+                                    display: 'inline-flex', alignItems: 'center', gap: 3,
+                                    fontSize: 10, fontWeight: 600,
+                                    background: `${slaColor}18`, color: slaColor!,
+                                    border: `1px solid ${slaColor}35`,
+                                    padding: '2px 7px', borderRadius: 99,
+                                }}>
+                                    <Clock size={9} strokeWidth={2.5} />
+                                    {fmtDuration(hoursInStage)}
+                                    {slaCrit && ' — просрочено!'}
+                                </span>
+                            )}
+                            {(client.open_tasks_count ?? 0) > 0 && (
+                                <span style={{
+                                    display: 'inline-flex', alignItems: 'center', gap: 3,
+                                    fontSize: 10, fontWeight: 600,
+                                    background: 'rgba(139,92,246,0.12)', color: c.purple,
+                                    border: '1px solid rgba(139,92,246,0.25)',
+                                    padding: '2px 7px', borderRadius: 99,
+                                }}>
+                                    <CheckSquare size={9} strokeWidth={2.5} />
+                                    {client.open_tasks_count}
+                                </span>
+                            )}
                         </div>
                     )}
                 </div>

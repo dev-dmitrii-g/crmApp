@@ -3,13 +3,14 @@ import api from '../../services/api';
 import { QRCodeSVG } from 'qrcode.react';
 import {
     GitBranch, LayoutGrid, Users, MessageCircle, BarChart2,
-    CheckCircle2, UserPlus,
+    CheckCircle2, UserPlus, Zap,
 } from 'lucide-react';
 import { useToast } from '../../hooks/useToast';
 import { Spinner } from '../ui/Spinner';
 import type { Stage, Manager, Analytics, FieldDefinition, FieldStageVisibility } from '../../types';
 import { StageManager } from './StageManager';
 import { FieldConstructor } from './FieldConstructor';
+import { AutomationManager } from './AutomationManager';
 import { c, inp, btn } from '../../theme';
 
 interface Props {
@@ -20,20 +21,22 @@ interface Props {
     analytics: Analytics | null;
     onRefresh: () => void;
     onWAConnected: () => void;
+    onSLAUpdated: () => void;
 }
 
-type Section = 'pipeline' | 'fields' | 'team' | 'whatsapp' | 'analytics';
+type Section = 'pipeline' | 'fields' | 'team' | 'whatsapp' | 'analytics' | 'automation';
 
 const NAV: { key: Section; Icon: React.FC<{ size?: number; strokeWidth?: number }>; label: string }[] = [
     { key: 'pipeline', Icon: GitBranch, label: 'Воронка продаж' },
     { key: 'fields', Icon: LayoutGrid, label: 'Поля карточки' },
+    { key: 'automation', Icon: Zap, label: 'Автоматизация' },
     { key: 'team', Icon: Users, label: 'Сотрудники' },
     { key: 'whatsapp', Icon: MessageCircle, label: 'WhatsApp' },
     { key: 'analytics', Icon: BarChart2, label: 'Аналитика' },
 ];
 
 export const AdminPanel: React.FC<Props> = ({
-    stages, fieldDefinitions, fieldVisibility, managers, analytics, onRefresh, onWAConnected,
+    stages, fieldDefinitions, fieldVisibility, managers, analytics, onRefresh, onWAConnected, onSLAUpdated,
 }) => {
     const toast = useToast();
     const [section, setSection] = useState<Section>('pipeline');
@@ -125,6 +128,12 @@ export const AdminPanel: React.FC<Props> = ({
 
             {/* ── Main content ── */}
             <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: '24px 28px' }}>
+
+                {section === 'automation' && (
+                    <PanelSection title="Автоматизация" desc="Триггеры на смену этапа, авто-задачи и SLA-контроль">
+                        <AutomationManager stages={stages} managers={managers} onSLAUpdated={onSLAUpdated} />
+                    </PanelSection>
+                )}
 
                 {section === 'pipeline' && (
                     <PanelSection title="Воронка продаж" desc="Управляйте этапами, правилами переходов и причинами отказа">

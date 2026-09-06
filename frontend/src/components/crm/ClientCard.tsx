@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Pencil, Trash2, Check, X } from 'lucide-react';
+import { Pencil, Trash2, Check, X, Plus, CheckSquare, Square, Clock } from 'lucide-react';
 import api from '../../services/api';
 import { useToast } from '../../hooks/useToast';
 import { Spinner } from '../ui/Spinner';
 import { c, inp as themeInp, btn } from '../../theme';
 import { formatPhone } from '../../utils';
-import type { Client, Stage, FieldDefinition, FieldStageVisibility, Contact, Company, ClientCounterparties } from '../../types';
+import type { Client, Stage, FieldDefinition, FieldStageVisibility, Contact, Company, ClientCounterparties, Task } from '../../types';
 
 interface Props {
     client: Client;
@@ -16,7 +16,7 @@ interface Props {
     onRefresh: () => void;
 }
 
-type CardTab = 'fields' | 'counterparties';
+type CardTab = 'fields' | 'counterparties' | 'tasks';
 
 const inp: React.CSSProperties = themeInp();
 
@@ -56,6 +56,12 @@ export const ClientCard: React.FC<Props> = ({
     const [contactSearch, setContactSearch] = useState('');
     const [companySearch, setCompanySearch] = useState('');
 
+    const [tasks, setTasks] = useState<Task[]>([]);
+    const [loadingTasks, setLoadingTasks] = useState(false);
+    const [newTaskTitle, setNewTaskTitle] = useState('');
+    const [newTaskDue, setNewTaskDue] = useState('');
+    const [addingTask, setAddingTask] = useState(false);
+
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [uploadFieldKey, setUploadFieldKey] = useState('');
 
@@ -68,6 +74,10 @@ export const ClientCard: React.FC<Props> = ({
     }, []);
 
     useEffect(() => {
+        if (tab === 'tasks') void loadTasks();
+    }, [tab]);
+
+    useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
             if (e.key === 'Escape') {
                 if (confirmDelete) { setConfirmDelete(false); return; }
@@ -78,6 +88,44 @@ export const ClientCard: React.FC<Props> = ({
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
     }, [confirmDelete, editing, onClose]);
+
+    const loadTasks = async () => {
+        setLoadingTasks(true);
+        try {
+            const r = await api.get<Task[]>(`/automation/tasks?client_id=${client.id}`);
+            setTasks(r.data || []);
+        } catch { toast.error('Ошибка загрузки задач'); }
+        finally { setLoadingTasks(false); }
+    };
+
+    const handleAddTask = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!newTaskTitle.trim()) return;
+        setAddingTask(true);
+        try {
+            await api.post('/automation/tasks', { client_id: client.id, title: newTaskTitle.trim(), due_at: newTaskDue });
+            setNewTaskTitle(''); setNewTaskDue('');
+            await loadTasks();
+            onRefresh();
+        } catch { toast.error('Ошибка создания задачи'); }
+        finally { setAddingTask(false); }
+    };
+
+    const handleToggleTask = async (task: Task) => {
+        try {
+            await api.patch(`/automation/tasks/${task.id}`, { completed: !task.completed });
+            setTasks(prev => prev.map(t => t.id === task.id ? { ...t, completed: !t.completed } : t));
+            onRefresh();
+        } catch { toast.error('Ошибка'); }
+    };
+
+    const handleDeleteTask = async (taskId: number) => {
+        try {
+            await api.delete(`/automation/tasks/${taskId}`);
+            setTasks(prev => prev.filter(t => t.id !== taskId));
+            onRefresh();
+        } catch { toast.error('Ошибка удаления'); }
+    };
 
     const loadCounterparties = async () => {
         const res = await api.get<ClientCounterparties>(`/clients/${client.id}/counterparties`);
@@ -276,6 +324,7 @@ export const ClientCard: React.FC<Props> = ({
         background: 'none', cursor: 'pointer',
         fontWeight: tab === t ? 600 : 400,
         color: tab === t ? c.blue : c.text2, fontSize: 13,
+        whiteSpace: 'nowrap',
     });
 
     const counterpartyRow: React.CSSProperties = {
@@ -387,6 +436,9 @@ export const ClientCard: React.FC<Props> = ({
                             ? `(${counterparties.contacts.length + counterparties.companies.length})`
                             : ''}
                     </button>
+                    <button style={tabStyle('tasks')} onClick={() => setTab('tasks')}>
+                        Задачи {(client.open_tasks_count ?? 0) > 0 ? `(${client.open_tasks_count})` : ''}
+                    </button>
                 </div>
 
                 {/* Body */}
@@ -460,6 +512,82 @@ export const ClientCard: React.FC<Props> = ({
                                     </div>
                                 ))}
                             </div>
+                        </div>
+                    )}
+
+                    {tab === 'tasks' && (
+                        <div>
+                            {/* Add task form */}
+                            <form onSubmit={e => { void handleAddTask(e); }}
+                                style={{ display: 'flex', gap: 8, marginBottom: 16, alignItems: 'flex-end' }}>
+                                <div style={{ flex: 1 }}>
+                                    <div style={{ fontSize: 11, fontWeight: 600, color: c.text2, marginBottom: 4 }}>Новая задача</div>
+                                    <input
+                                        style={inp}
+                                        placeholder="Название задачи..."
+                                        value={newTaskTitle}
+                                        onChange={e => setNewTaskTitle(e.target.value)}
+                                        required
+                                    />
+                                </div>
+                                <div>
+                                    <div style={{ fontSize: 11, fontWeight: 600, color: c.text2, marginBottom: 4 }}>Срок</div>
+                                    <input
+                                        type="datetime-local"
+                                        style={{ ...inp, fontSize: 12 }}
+                                        value={newTaskDue}
+                                        onChange={e => setNewTaskDue(e.target.value)}
+                                    />
+                                </div>
+                                <button type="submit" disabled={addingTask || !newTaskTitle.trim()}
+                                    style={{ ...btn(c.blue, { display: 'flex', alignItems: 'center', gap: 4, padding: '8px 12px' }), opacity: addingTask || !newTaskTitle.trim() ? 0.5 : 1 }}>
+                                    {addingTask ? <Spinner size={13} /> : <Plus size={14} />}
+                                </button>
+                            </form>
+
+                            {loadingTasks ? (
+                                <div style={{ display: 'flex', justifyContent: 'center', padding: '20px 0' }}><Spinner size={20} /></div>
+                            ) : tasks.length === 0 ? (
+                                <p style={{ color: c.text3, fontSize: 13, textAlign: 'center', marginTop: 20 }}>Нет задач</p>
+                            ) : (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                    {tasks.map(task => (
+                                        <div key={task.id} style={{
+                                            display: 'flex', alignItems: 'flex-start', gap: 10,
+                                            padding: '10px 12px',
+                                            background: task.completed ? 'rgba(255,255,255,0.02)' : c.bgElevated,
+                                            border: `1px solid ${c.border}`,
+                                            borderRadius: 8,
+                                            opacity: task.completed ? 0.55 : 1,
+                                        }}>
+                                            <button onClick={() => { void handleToggleTask(task); }}
+                                                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: task.completed ? c.green : c.text3, flexShrink: 0, marginTop: 1 }}>
+                                                {task.completed ? <CheckSquare size={16} strokeWidth={2} /> : <Square size={16} strokeWidth={1.8} />}
+                                            </button>
+                                            <div style={{ flex: 1, minWidth: 0 }}>
+                                                <div style={{ fontSize: 13, color: task.completed ? c.text3 : c.text1, textDecoration: task.completed ? 'line-through' : 'none', wordBreak: 'break-word' }}>
+                                                    {task.title}
+                                                </div>
+                                                {task.due_at && (
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: c.text3, marginTop: 3 }}>
+                                                        <Clock size={10} strokeWidth={2} />
+                                                        {new Date(task.due_at).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                                                    </div>
+                                                )}
+                                                {task.automation_id && (
+                                                    <div style={{ fontSize: 10, color: c.amber, marginTop: 2 }}>авто</div>
+                                                )}
+                                            </div>
+                                            <button onClick={() => { void handleDeleteTask(task.id); }}
+                                                style={{ background: 'none', border: 'none', cursor: 'pointer', color: c.text3, padding: 2, borderRadius: 4, flexShrink: 0 }}
+                                                onMouseEnter={e => (e.currentTarget.style.color = c.red)}
+                                                onMouseLeave={e => (e.currentTarget.style.color = c.text3)}>
+                                                <X size={13} strokeWidth={2} />
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
                         </div>
                     )}
                 </div>

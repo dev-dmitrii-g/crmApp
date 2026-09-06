@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import api from './services/api';
-import type { Client, Stage, Manager, Analytics, Message, TransitionRule, StageRequiredField, LossReason, FieldDefinition, FieldStageVisibility } from './types';
+import type { Client, Stage, Manager, Analytics, Message, TransitionRule, StageRequiredField, LossReason, FieldDefinition, FieldStageVisibility, SLASetting } from './types';
 import { KanbanBoard } from './components/kanban/KanbanBoard';
 import { AdminPanel } from './components/admin/AdminPanel';
 import { ClientCard } from './components/crm/ClientCard';
@@ -29,6 +29,7 @@ export default function App() {
   const [lossReasons, setLossReasons] = useState<LossReason[]>([]);
   const [fieldDefinitions, setFieldDefinitions] = useState<FieldDefinition[]>([]);
   const [fieldVisibility, setFieldVisibility] = useState<FieldStageVisibility[]>([]);
+  const [slaSettings, setSlaSettings] = useState<SLASetting[]>([]);
   const [cardClient, setCardClient] = useState<Client | null>(null);
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -114,13 +115,14 @@ export default function App() {
 
   const fetchStages = useCallback(async () => {
     try {
-      const [sR, trR, srR, lrR, fdR, fvR] = await Promise.all([
+      const [sR, trR, srR, lrR, fdR, fvR, slaR] = await Promise.all([
         api.get<Stage[]>('/pipeline/stages'),
         api.get<TransitionRule[]>('/pipeline/transition-rules'),
         api.get<StageRequiredField[]>('/pipeline/stage-fields'),
         api.get<LossReason[]>('/crm/loss-reasons'),
         api.get<FieldDefinition[]>('/pipeline/field-definitions'),
         api.get<FieldStageVisibility[]>('/pipeline/field-visibility'),
+        api.get<SLASetting[]>('/automation/sla'),
       ]);
       setStages(sR.data || []);
       setTransitionRules(trR.data || []);
@@ -128,6 +130,7 @@ export default function App() {
       setLossReasons(lrR.data || []);
       setFieldDefinitions(fdR.data || []);
       setFieldVisibility(fvR.data || []);
+      setSlaSettings(slaR.data || []);
     } catch (err) { console.error(err); }
   }, []);
 
@@ -344,6 +347,7 @@ export default function App() {
                 transitionRules={transitionRules}
                 stageRequiredFields={stageRequiredFields}
                 lossReasons={lossReasons}
+                slaSettings={slaSettings}
                 isAdmin={isAdmin}
                 loading={loadingKanban}
                 waConnected={waConnected}
@@ -387,6 +391,7 @@ export default function App() {
               analytics={analytics}
               onRefresh={() => { void fetchStages(); void fetchAdminData(); }}
               onWAConnected={() => setWaConnected(true)}
+              onSLAUpdated={() => { void fetchStages(); }}
             />
           </div>
         )}

@@ -5,6 +5,10 @@ export interface Client {
     status: string;
     loss_reason?: string;
     custom_fields?: Record<string, string>;
+    manager_id?: number;
+    created_at?: string;
+    stage_changed_at?: string;
+    open_tasks_count?: number;
 }
 
 export interface Stage {
@@ -115,4 +119,32 @@ export interface StageRequiredField {
     stage_code: string;
     field_name: string;
     field_label: string;
+}
+
+export interface AutomationRule {
+    id: number;
+    name: string;
+    is_active: boolean;
+    trigger_stage_code: string;
+    action_type: 'send_whatsapp' | 'assign_manager' | 'create_task';
+    action_data: Record<string, unknown>;
+    sort_order: number;
+    created_at: string;
+}
+
+export interface Task {
+    id: number;
+    client_id: number;
+    title: string;
+    due_at?: string;
+    completed: boolean;
+    completed_at?: string;
+    automation_id?: number;
+    created_at: string;
+}
+
+export interface SLASetting {
+    stage_code: string;
+    warn_hours: number;
+    crit_hours: number;
 }

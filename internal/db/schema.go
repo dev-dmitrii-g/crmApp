@@ -137,4 +137,34 @@ CREATE TABLE IF NOT EXISTS stage_required_fields (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(stage_code, field_name)
 );
+
+CREATE TABLE IF NOT EXISTS stage_automations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT 1,
+    trigger_stage_code TEXT NOT NULL,
+    action_type TEXT NOT NULL,
+    action_data TEXT NOT NULL DEFAULT '{}',
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    client_id INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    due_at TIMESTAMP,
+    completed BOOLEAN NOT NULL DEFAULT 0,
+    completed_at TIMESTAMP,
+    automation_id INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(client_id) REFERENCES clients(id) ON DELETE CASCADE,
+    FOREIGN KEY(automation_id) REFERENCES stage_automations(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS sla_settings (
+    stage_code TEXT PRIMARY KEY,
+    warn_hours INTEGER NOT NULL DEFAULT 0,
+    crit_hours INTEGER NOT NULL DEFAULT 0
+);
 `
