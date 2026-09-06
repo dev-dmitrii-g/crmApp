@@ -136,7 +136,12 @@ export const AdminPanel: React.FC<Props> = ({
     const connectWA = () => {
         setWaStatus('connecting');
         setQrCode('');
-        const ws = new WebSocket(`ws://localhost:8080/api/ws/whatsapp/qr?token=${localStorage.getItem('token')}`);
+
+        // Автоматически подхватываем текущий IP/хост вместо жесткого localhost
+        const host = window.location.hostname;
+        const token = localStorage.getItem('token');
+        const ws = new WebSocket(`ws://${host}:8080/api/ws/whatsapp/qr?token=${token}`);
+
         ws.onmessage = (event) => {
             const data = JSON.parse(event.data as string) as { type?: string; code?: string; status?: string };
             if (data.type === 'qr' && data.code) setQrCode(data.code);

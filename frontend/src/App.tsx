@@ -70,7 +70,14 @@ export default function App() {
   // Single WS connection — only reconnects when token changes
   useEffect(() => {
     if (!token) return;
-    const chatWs = new WebSocket(`ws://localhost:8080/api/ws/chat?token=${token}`);
+
+    // Автоматически определяем адрес вебсокета из VITE_API_URL
+    const envUrl = import.meta.env.VITE_API_URL || 'http://localhost:8080/api';
+    const apiUrl = new URL(envUrl.startsWith('http') ? envUrl : `http://${window.location.host}${envUrl}`);
+    const wsUrl = `ws://${apiUrl.host}/api/ws/chat?token=${token}`;
+
+    const chatWs = new WebSocket(wsUrl);
+
     chatWs.onmessage = (evt) => {
       try {
         const data = JSON.parse(evt.data as string) as {
@@ -79,10 +86,8 @@ export default function App() {
         };
         if (data.type === 'new_message' && data.client_id != null) {
           const sc = selectedClientRef.current;
-          // Append to current chat if this client's chat is open
           if (sc && sc.id === data.client_id) {
             setMessages(prev => {
-              // Deduplicate by ID for outgoing (optimistic add gave no ID yet)
               if (data.is_outgoing && prev.some(m => m.id === data.id)) return prev;
               return [...prev, {
                 id: data.id,
@@ -93,20 +98,20 @@ export default function App() {
               }];
             });
           }
-          // Refresh client list (new leads, unread counts)
           void fetchClientsRef.current();
           if (activeTabRef.current === 'admin') void fetchAdminDataRef.current();
         }
       } catch {
-        // Non-JSON (shouldn't happen)
         void fetchClientsRef.current();
       }
     };
+
     const ping = setInterval(() => {
       if (chatWs.readyState === WebSocket.OPEN) chatWs.send(JSON.stringify({ type: 'ping' }));
     }, 30000);
+
     return () => { clearInterval(ping); if (chatWs.readyState < 2) chatWs.close(); };
-  }, [token]); // ← no more selectedClient/activeTab in deps
+  }, [token]);
 
   useEffect(() => {
     if (token) {

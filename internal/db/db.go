@@ -4,8 +4,10 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
 
 	_ "github.com/mattn/go-sqlite3"
+	"golang.org/x/crypto/bcrypt"
 )
 
 var DB *sql.DB
@@ -65,8 +67,45 @@ func InitDB(dbPath string) (*sql.DB, error) {
 		('head',       'Руководитель отдела', '{"view_all":1,"edit":1,"delete":1,"export":1,"settings":0,"chat":1}'),
 		('manager',    'Менеджер',            '{"view_all":0,"edit":1,"delete":0,"export":0,"settings":0,"chat":1}'),
 		('accountant', 'Бухгалтер',           '{"view_all":1,"edit":0,"delete":0,"export":1,"settings":0,"chat":0}'),
-		('observer',   'Наблюдатель',         '{"view_all":1,"edit":0,"delete":0,"export":0,"settings":0,"chat":0}')
+		('observer',   'Наблюдатель',          '{"view_all":1,"edit":0,"delete":0,"export":0,"settings":0,"chat":0}')
 	`)
+
+	// ── Auto-create Admin Account from ENV ────────────────────────────────────
+	adminEmail := os.Getenv("ADMIN_EMAIL")
+	if adminEmail == "" {
+		adminEmail = "test@mail.com"
+	}
+
+	adminPassword := os.Getenv("ADMIN_PASSWORD")
+	if adminPassword == "" {
+		adminPassword = "securepassword"
+	}
+
+	adminName := os.Getenv("ADMIN_NAME")
+	if adminName == "" {
+		adminName = "Administrator"
+	}
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(adminPassword), bcrypt.DefaultCost)
+	if err == nil {
+		_, seedErr := database.Exec(`
+			INSERT INTO users (email, password_hash, name, role) 
+			VALUES (?, ?, ?, 'admin')
+			ON CONFLICT(email) DO UPDATE SET 
+				password_hash = excluded.password_hash,
+				name = excluded.name,
+				role = 'admin';
+		`, adminEmail, string(hashedPassword), adminName)
+
+		if seedErr != nil {
+			fmt.Println("Admin auto-seed error:", seedErr)
+		} else {
+			fmt.Printf("Admin account verified/created: %s\n", adminEmail)
+		}
+	} else {
+		fmt.Println("Failed to hash admin password:", err)
+	}
+	// ──────────────────────────────────────────────────────────────────────────
 
 	DB = database
 	fmt.Println("Database initialized successfully at:", dbPath)

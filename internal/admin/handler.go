@@ -55,8 +55,9 @@ func CreateManager(c *gin.Context) {
 		return
 	}
 	res, err := db.DB.Exec(
-		"INSERT INTO users (name, email, password_hash, role) VALUES (?,?,'manager',?)",
-		input.Name, input.Email, string(hashed))
+		"INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, 'manager')",
+		input.Name, input.Email, string(hashed),
+	)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Пользователь с таким email уже существует"})
 		return

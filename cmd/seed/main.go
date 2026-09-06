@@ -3,21 +3,49 @@ package main
 import (
 	"crmProject/internal/db"
 	"log"
+	"os"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 func main() {
-	database, err := db.InitDB("./crm.db")
+	dbPath := os.Getenv("DB_PATH")
+	if dbPath == "" {
+		dbPath = "./crm.db"
+	}
+
+	database, err := db.InitDB(dbPath)
 	if err != nil {
 		log.Fatalf("Database error: %v", err)
 	}
 	defer database.Close()
 
-	_, _ = database.Exec(`
-		INSERT INTO clients (phone, name, status) VALUES 
-		('79991112233', 'Иван Иванов (Лид)', 'new'),
-		('79992223344', 'Алексей Смирнов', 'in_progress'),
-		('79993334455', 'Елена Петрова', 'done');
-	`)
+	adminEmail := os.Getenv("ADMIN_EMAIL")
+	if adminEmail == "" {
+		adminEmail = "test@mail.com"
+	}
 
-	log.Println("Seed data inserted successfully!")
+	adminPassword := os.Getenv("ADMIN_PASSWORD")
+	if adminPassword == "" {
+		adminPassword = "securepassword"
+	}
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(adminPassword), bcrypt.DefaultCost)
+	if err != nil {
+		log.Fatalf("Failed to hash admin password: %v", err)
+	}
+
+	query := `
+		INSERT INTO users (email, password, role) 
+		VALUES (?, ?, 'admin') 
+		ON CONFLICT(email) DO NOTHING;
+	`
+	_, err = database.Exec(query, adminEmail, string(hashedPassword))
+	if err != nil {
+		log.Printf("Admin creation warning: %v", err)
+	} else {
+		log.Println("Admin user checked/created successfully!")
+	}
+
+	log.Println("Seed data processed successfully!")
 }

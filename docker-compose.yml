@@ -6,11 +6,15 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./data:/app/data        # persistent DB files
-      - ./uploads:/app/uploads  # uploaded client files
+      - ./data:/app/data
+      - ./uploads:/app/uploads
+    env_file:
+      - .env
     environment:
       DB_PATH: /app/data/crm.db
       WA_DB_PATH: /app/data/wa.db
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-test@mail.com}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-securepassword}
     restart: unless-stopped
 
   frontend:
@@ -18,8 +22,7 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        # Change this if the backend is on a different host/port
-        VITE_API_URL: http://localhost:8080/api
+        VITE_API_URL: http://192.168.0.36:8080/api
     ports:
       - "3000:80"
     depends_on:
