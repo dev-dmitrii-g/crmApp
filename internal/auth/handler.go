@@ -45,7 +45,7 @@ func Register(c *gin.Context) {
 
 	_, _ = db.DB.Exec("INSERT OR IGNORE INTO wa_sessions (user_id) VALUES (?)", userID)
 
-	token, err := GenerateToken(uint(userID), input.Email)
+	token, err := GenerateToken(uint(userID), input.Email, "manager", 0)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
 		return
@@ -53,7 +53,7 @@ func Register(c *gin.Context) {
 
 	c.JSON(http.StatusCreated, gin.H{
 		"token": token,
-		"user":  gin.H{"id": userID, "name": input.Name, "email": input.Email},
+		"user":  gin.H{"id": userID, "name": input.Name, "email": input.Email, "role": "manager"},
 	})
 }
 
@@ -65,40 +65,41 @@ func Login(c *gin.Context) {
 	}
 
 	var userID uint
-	var name, hashedPassword string
+	var name, hashedPassword, role string
+	var isActive bool
+	var tokenVersion int
 
-	err := db.DB.QueryRow("SELECT id, name, password_hash FROM users WHERE email = ?", input.Email).
-		Scan(&userID, &name, &hashedPassword)
+	err := db.DB.QueryRow(
+		"SELECT id, name, password_hash, role, is_active, token_version FROM users WHERE email=?",
+		input.Email,
+	).Scan(&userID, &name, &hashedPassword, &role, &isActive, &tokenVersion)
 
 	if err == sql.ErrNoRows || !CheckPasswordHash(input.Password, hashedPassword) {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid email or password"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Неверный email или пароль"})
+		return
+	}
+	if !isActive {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Аккаунт заблокирован — обратитесь к администратору"})
 		return
 	}
 
 	if userID == 1 {
-		_, _ = db.DB.Exec("UPDATE users SET role = 'admin' WHERE id = 1")
+		_, _ = db.DB.Exec("UPDATE users SET role='admin' WHERE id=1")
+		role = "admin"
+	}
+	if role == "" {
+		role = "manager"
 	}
 
-	token, err := GenerateToken(userID, input.Email)
+	token, err := GenerateToken(userID, input.Email, role, tokenVersion)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
 		return
 	}
 
-	var role string
-	err = db.DB.QueryRow("SELECT role FROM users WHERE id = ?", userID).Scan(&role)
-	if err != nil || role == "" {
-		role = "manager"
-	}
-
 	c.JSON(http.StatusOK, gin.H{
 		"token": token,
-		"user": gin.H{
-			"id":    userID,
-			"name":  name,
-			"email": input.Email,
-			"role":  role,
-		},
+		"user":  gin.H{"id": userID, "name": name, "email": input.Email, "role": role},
 	})
 }
 
@@ -110,21 +111,21 @@ func AuthMiddleware() gin.HandlerFunc {
 			c.Abort()
 			return
 		}
-
 		parts := strings.Split(authHeader, " ")
 		if len(parts) != 2 || parts[0] != "Bearer" {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header format must be Bearer {token}"})
 			c.Abort()
 			return
 		}
-
 		claims, err := ValidateToken(parts[1])
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
 			c.Abort()
 			return
 		}
-
+		if !checkUserActive(c, claims) {
+			return
+		}
 		c.Set("user_id", claims.UserID)
 		c.Set("email", claims.Email)
 		c.Next()

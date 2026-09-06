@@ -15,8 +15,10 @@ import (
 var jwtSecret = []byte("jwt_secret")
 
 type Claims struct {
-	UserID uint   `json:"user_id"`
-	Email  string `json:"email"`
+	UserID       uint   `json:"user_id"`
+	Email        string `json:"email"`
+	Role         string `json:"role"`
+	TokenVersion int    `json:"token_version"`
 	jwt.RegisteredClaims
 }
 
@@ -30,16 +32,16 @@ func CheckPasswordHash(password, hash string) bool {
 	return err == nil
 }
 
-func GenerateToken(userID uint, email string) (string, error) {
-	expirationTime := time.Now().Add(24 * time.Hour)
+func GenerateToken(userID uint, email, role string, tokenVersion int) (string, error) {
 	claims := &Claims{
-		UserID: userID,
-		Email:  email,
+		UserID:       userID,
+		Email:        email,
+		Role:         role,
+		TokenVersion: tokenVersion,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(expirationTime),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
 		},
 	}
-
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString(jwtSecret)
 }
@@ -57,6 +59,37 @@ func ValidateToken(tokenString string) (*Claims, error) {
 	return claims, nil
 }
 
+func checkUserActive(c *gin.Context, claims *Claims) bool {
+	var isActive bool
+	var dbVersion int
+	var dbRole string
+	err := db.DB.QueryRow(
+		"SELECT is_active, token_version, role FROM users WHERE id=?", claims.UserID,
+	).Scan(&isActive, &dbVersion, &dbRole)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not found"})
+		c.Abort()
+		return false
+	}
+	if !isActive {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Аккаунт заблокирован — обратитесь к администратору"})
+		c.Abort()
+		return false
+	}
+	if claims.TokenVersion != dbVersion {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Сессия отозвана — войдите снова"})
+		c.Abort()
+		return false
+	}
+	// Use DB role as authoritative source; JWT role may lag if changed
+	role := claims.Role
+	if role == "" {
+		role = dbRole
+	}
+	c.Set("user_role", role)
+	return true
+}
+
 func JWTAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
@@ -65,21 +98,21 @@ func JWTAuthMiddleware() gin.HandlerFunc {
 			c.Abort()
 			return
 		}
-
 		parts := strings.Split(authHeader, " ")
 		if len(parts) != 2 || parts[0] != "Bearer" {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid header format"})
 			c.Abort()
 			return
 		}
-
 		claims, err := ValidateToken(parts[1])
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired token"})
 			c.Abort()
 			return
 		}
-
+		if !checkUserActive(c, claims) {
+			return
+		}
 		c.Set("user_id", claims.UserID)
 		c.Next()
 	}
@@ -87,22 +120,22 @@ func JWTAuthMiddleware() gin.HandlerFunc {
 
 func AdminOnly() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		userIDRaw, exists := c.Get("user_id")
-		if !exists {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		role, _ := c.Get("user_role")
+		if role != "admin" {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Требуется роль администратора"})
 			c.Abort()
 			return
 		}
-
-		userID := userIDRaw.(uint)
-		var role string
-		err := db.DB.QueryRow("SELECT role FROM users WHERE id = ?", userID).Scan(&role)
-		if err != nil || role != "admin" {
-			c.JSON(http.StatusForbidden, gin.H{"error": "Access denied: Admin role required"})
-			c.Abort()
-			return
-		}
-
 		c.Next()
 	}
+}
+
+// HasPermission checks a named permission for a role via the roles table.
+func HasPermission(role, perm string) bool {
+	var v int
+	_ = db.DB.QueryRow(
+		"SELECT COALESCE(json_extract(permissions, ?), 0) FROM roles WHERE code=?",
+		"$."+perm, role,
+	).Scan(&v)
+	return v == 1
 }

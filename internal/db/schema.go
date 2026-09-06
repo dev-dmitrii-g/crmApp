@@ -167,4 +167,10 @@ CREATE TABLE IF NOT EXISTS sla_settings (
     warn_hours INTEGER NOT NULL DEFAULT 0,
     crit_hours INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS roles (
+    code TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    permissions TEXT NOT NULL DEFAULT '{}'
+);
 `
