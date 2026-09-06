@@ -34,8 +34,16 @@ func Register(c *gin.Context) {
 		return
 	}
 
-	res, err := db.DB.Exec("INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)",
-		input.Name, input.Email, hashedPassword)
+	// First registered user becomes admin automatically
+	var count int
+	_ = db.DB.QueryRow("SELECT COUNT(*) FROM users").Scan(&count)
+	role := "manager"
+	if count == 0 {
+		role = "admin"
+	}
+
+	res, err := db.DB.Exec("INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?)",
+		input.Name, input.Email, hashedPassword, role)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "User already exists or DB error"})
 		return
@@ -45,7 +53,7 @@ func Register(c *gin.Context) {
 
 	_, _ = db.DB.Exec("INSERT OR IGNORE INTO wa_sessions (user_id) VALUES (?)", userID)
 
-	token, err := GenerateToken(uint(userID), input.Email, "manager", 0)
+	token, err := GenerateToken(uint(userID), input.Email, role, 0)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
 		return
@@ -53,7 +61,7 @@ func Register(c *gin.Context) {
 
 	c.JSON(http.StatusCreated, gin.H{
 		"token": token,
-		"user":  gin.H{"id": userID, "name": input.Name, "email": input.Email, "role": "manager"},
+		"user":  gin.H{"id": userID, "name": input.Name, "email": input.Email, "role": role},
 	})
 }
 
