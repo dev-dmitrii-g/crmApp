@@ -173,4 +173,13 @@ CREATE TABLE IF NOT EXISTS roles (
     name TEXT NOT NULL,
     permissions TEXT NOT NULL DEFAULT '{}'
 );
+
+CREATE TABLE IF NOT EXISTS saved_filters (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    params TEXT NOT NULL DEFAULT '{}',
+    created_by INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL
+);
 `

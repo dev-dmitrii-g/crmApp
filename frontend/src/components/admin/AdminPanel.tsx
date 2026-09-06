@@ -12,6 +12,7 @@ import { StageManager } from './StageManager';
 import { FieldConstructor } from './FieldConstructor';
 import { AutomationManager } from './AutomationManager';
 import { RoleMatrix } from './RoleMatrix';
+import { AnalyticsDashboard } from './AnalyticsDashboard';
 import { c, inp, btn } from '../../theme';
 
 interface Props {
@@ -146,13 +147,6 @@ export const AdminPanel: React.FC<Props> = ({
         };
         ws.onerror = () => setWaStatus('idle');
     };
-
-    const metricCards = analytics ? [
-        { label: 'Всего клиентов', value: analytics.metrics.total_clients, color: c.blue, bg: 'rgba(59,130,246,0.08)' },
-        { label: 'Завершённых сделок', value: analytics.metrics.done_clients, color: c.green, bg: 'rgba(16,185,129,0.08)' },
-        { label: 'Всего сообщений', value: analytics.metrics.total_messages, color: c.amber, bg: 'rgba(245,158,11,0.08)' },
-        { label: 'Исходящих', value: analytics.metrics.outgoing_messages, color: c.purple, bg: 'rgba(139,92,246,0.08)' },
-    ] : [];
 
     return (
         <div style={{ display: 'flex', height: '100%', minHeight: 0 }}>
@@ -392,51 +386,8 @@ export const AdminPanel: React.FC<Props> = ({
                 )}
 
                 {section === 'analytics' && (
-                    <PanelSection title="Аналитика" desc="Ключевые метрики и журнал событий">
-                        {analytics ? (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 14 }}>
-                                    {metricCards.map(m => (
-                                        <div key={m.label} style={{ background: m.bg, border: `1px solid ${m.color}25`, borderRadius: 14, padding: '20px 22px' }}>
-                                            <div style={{ fontSize: 30, fontWeight: 800, color: m.color, lineHeight: 1 }}>{m.value}</div>
-                                            <div style={{ fontSize: 12, color: c.text2, marginTop: 6 }}>{m.label}</div>
-                                        </div>
-                                    ))}
-                                </div>
-
-                                <div>
-                                    <p style={{ margin: '0 0 12px', fontSize: 11, fontWeight: 700, color: c.text3, textTransform: 'uppercase', letterSpacing: '0.07em' }}>Журнал событий</p>
-                                    <Card style={{ padding: 0 }}>
-                                        <div style={{ maxHeight: 400, overflowY: 'auto' }}>
-                                            {(analytics.recent_activity || []).map((log, i) => (
-                                                <div key={log.id} style={{ padding: '10px 16px', borderBottom: i < analytics.recent_activity.length - 1 ? `1px solid ${c.border}` : 'none' }}>
-                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                                                        <div style={{ fontSize: 13 }}>
-                                                            <span style={{ color: c.blue, fontWeight: 600 }}>{log.user_name}</span>
-                                                            <span style={{ color: c.text1 }}> {log.action}</span>
-                                                            {log.details && <span style={{ color: c.text3 }}> — {log.details}</span>}
-                                                        </div>
-                                                        <span style={{ fontSize: 11, color: c.text3, flexShrink: 0, marginLeft: 16, whiteSpace: 'nowrap' }}>{log.timestamp}</span>
-                                                    </div>
-                                                    {(log.old_value || log.new_value) && (
-                                                        <div style={{ fontSize: 11, marginTop: 4, display: 'flex', gap: 6, alignItems: 'center' }}>
-                                                            {log.old_value && <span style={{ color: '#f87171', background: 'rgba(239,68,68,0.08)', padding: '1px 6px', borderRadius: 4 }}>{log.old_value}</span>}
-                                                            {log.old_value && log.new_value && <span style={{ color: c.text3 }}>→</span>}
-                                                            {log.new_value && <span style={{ color: c.green, background: 'rgba(16,185,129,0.08)', padding: '1px 6px', borderRadius: 4 }}>{log.new_value}</span>}
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            ))}
-                                            {(!analytics.recent_activity || analytics.recent_activity.length === 0) && (
-                                                <p style={{ padding: 20, color: c.text3, textAlign: 'center', margin: 0 }}>Нет событий</p>
-                                            )}
-                                        </div>
-                                    </Card>
-                                </div>
-                            </div>
-                        ) : (
-                            <p style={{ color: c.text3, fontSize: 13 }}>Загрузка данных...</p>
-                        )}
+                    <PanelSection title="Аналитика" desc="Воронка, менеджеры, финансы и журнал событий">
+                        <AnalyticsDashboard analytics={analytics} />
                     </PanelSection>
                 )}
             </div>

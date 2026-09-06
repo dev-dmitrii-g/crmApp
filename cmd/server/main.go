@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crmProject/internal/admin"
+	"crmProject/internal/analytics"
 	"crmProject/internal/automation"
 	"crmProject/internal/chat"
 	"crmProject/internal/contacts"
@@ -109,6 +110,14 @@ func main() {
 
 		// SLA read (all managers need this for Kanban display)
 		api.GET("/automation/sla", automation.GetSLA)
+
+		// Analytics (all authenticated users)
+		api.GET("/analytics/funnel", analytics.GetFunnel)
+		api.GET("/analytics/managers", analytics.GetManagerStats)
+		api.GET("/analytics/finance", analytics.GetFinancials)
+		api.GET("/saved-filters", analytics.GetSavedFilters)
+		api.POST("/saved-filters", analytics.CreateSavedFilter)
+		api.DELETE("/saved-filters/:id", analytics.DeleteSavedFilter)
 
 		// Pipeline (read-only for all)
 		api.GET("/pipeline/stages", auth.JWTAuthMiddleware(), pipeline.GetStages)

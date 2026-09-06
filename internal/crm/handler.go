@@ -58,28 +58,64 @@ func GetClients(c *gin.Context) {
 	role, _ := c.Get("user_role")
 	roleStr, _ := role.(string)
 
-	var rows *sql.Rows
-	var err error
+	var conds []string
+	var args []interface{}
 
-	if auth.HasPermission(roleStr, "view_all") {
-		rows, err = db.DB.Query(`
-			SELECT c.id, c.phone, c.name, c.status,
-			       COALESCE(c.loss_reason,''), COALESCE(c.custom_fields,'{}'),
-			       c.manager_id, c.created_at,
-			       COALESCE(c.stage_changed_at, c.created_at),
-			       (SELECT COUNT(*) FROM tasks t WHERE t.client_id=c.id AND t.completed=0)
-			FROM clients c ORDER BY c.created_at DESC`)
-	} else {
+	// Data scope
+	if !auth.HasPermission(roleStr, "view_all") {
 		userIDRaw, _ := c.Get("user_id")
-		userID := int(userIDRaw.(uint))
-		rows, err = db.DB.Query(`
-			SELECT c.id, c.phone, c.name, c.status,
-			       COALESCE(c.loss_reason,''), COALESCE(c.custom_fields,'{}'),
-			       c.manager_id, c.created_at,
-			       COALESCE(c.stage_changed_at, c.created_at),
-			       (SELECT COUNT(*) FROM tasks t WHERE t.client_id=c.id AND t.completed=0)
-			FROM clients c WHERE c.manager_id=? ORDER BY c.created_at DESC`, userID)
+		conds = append(conds, "c.manager_id=?")
+		args = append(args, int(userIDRaw.(uint)))
 	}
+
+	// Query-param filters
+	if v := c.Query("manager_id"); v != "" {
+		conds = append(conds, "c.manager_id=?")
+		args = append(args, v)
+	}
+	if v := c.Query("stage"); v != "" {
+		conds = append(conds, "c.status=?")
+		args = append(args, v)
+	}
+	if v := c.Query("search"); v != "" {
+		conds = append(conds, "(c.name LIKE ? OR c.phone LIKE ?)")
+		args = append(args, "%"+v+"%", "%"+v+"%")
+	}
+	if v := c.Query("date_from"); v != "" {
+		conds = append(conds, "c.created_at >= ?")
+		args = append(args, v)
+	}
+	if v := c.Query("date_to"); v != "" {
+		conds = append(conds, "c.created_at <= ?")
+		args = append(args, v+" 23:59:59")
+	}
+	switch c.Query("has_tasks") {
+	case "1":
+		conds = append(conds, "(SELECT COUNT(*) FROM tasks t WHERE t.client_id=c.id AND t.completed=0)>0")
+	case "0":
+		conds = append(conds, "(SELECT COUNT(*) FROM tasks t WHERE t.client_id=c.id AND t.completed=0)=0")
+	}
+	if v := c.Query("min_amount"); v != "" {
+		conds = append(conds, "CAST(json_extract(c.custom_fields,'$.amount') AS REAL)>=?")
+		args = append(args, v)
+	}
+	if v := c.Query("max_amount"); v != "" {
+		conds = append(conds, "CAST(json_extract(c.custom_fields,'$.amount') AS REAL)<=?")
+		args = append(args, v)
+	}
+
+	where := ""
+	if len(conds) > 0 {
+		where = "WHERE " + strings.Join(conds, " AND ")
+	}
+
+	rows, err := db.DB.Query(fmt.Sprintf(`
+		SELECT c.id, c.phone, c.name, c.status,
+		       COALESCE(c.loss_reason,''), COALESCE(c.custom_fields,'{}'),
+		       c.manager_id, c.created_at,
+		       COALESCE(c.stage_changed_at, c.created_at),
+		       (SELECT COUNT(*) FROM tasks t WHERE t.client_id=c.id AND t.completed=0)
+		FROM clients c %s ORDER BY c.created_at DESC`, where), args...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch clients"})
 		return

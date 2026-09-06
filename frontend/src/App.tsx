@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import api from './services/api';
-import type { Client, Stage, Manager, Analytics, Message, TransitionRule, StageRequiredField, LossReason, FieldDefinition, FieldStageVisibility, SLASetting } from './types';
+import type { Client, Stage, Manager, Analytics, Message, TransitionRule, StageRequiredField, LossReason, FieldDefinition, FieldStageVisibility, SLASetting, ClientFilters, SavedFilter } from './types';
+import { emptyFilters } from './types';
 import { KanbanBoard } from './components/kanban/KanbanBoard';
+import { FilterBar } from './components/kanban/FilterBar';
 import { AdminPanel } from './components/admin/AdminPanel';
 import { ClientCard } from './components/crm/ClientCard';
 import { ContactsCompanies } from './components/crm/ContactsCompanies';
@@ -43,6 +45,8 @@ export default function App() {
   const [managers, setManagers] = useState<Manager[]>([]);
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [waConnected, setWaConnected] = useState(false);
+  const [filters, setFilters] = useState<ClientFilters>(emptyFilters());
+  const [savedFilters, setSavedFilters] = useState<SavedFilter[]>([]);
 
   const isAdmin = userRole === 'admin';
   const [loadingMessages, setLoadingMessages] = useState(false);
@@ -109,9 +113,17 @@ export default function App() {
       void fetchStages();
       void fetchClients();
       void fetchWAStatus();
+      api.get<SavedFilter[]>('/saved-filters')
+        .then(r => setSavedFilters(r.data || []))
+        .catch(() => { /* ignore */ });
       if (activeTab === 'admin') void fetchAdminData();
     }
   }, [token, activeTab]);
+
+  const handleApplyFilters = (f: ClientFilters) => {
+    setFilters(f);
+    void fetchClients(f);
+  };
 
   const fetchStages = useCallback(async () => {
     try {
@@ -137,13 +149,16 @@ export default function App() {
     } catch { /* SLA unavailable — badges simply won't show */ }
   }, []);
 
-  const fetchClients = useCallback(async () => {
+  const fetchClients = useCallback(async (f?: ClientFilters) => {
     try {
-      const r = await api.get<Client[]>('/clients');
+      const params = new URLSearchParams();
+      const active = f ?? filters;
+      Object.entries(active).forEach(([k, v]) => { if (v) params.set(k, v); });
+      const r = await api.get<Client[]>(`/clients${params.size ? '?' + params.toString() : ''}`);
       setClients(r.data || []);
     } catch (err) { console.error(err); }
     finally { setLoadingKanban(false); }
-  }, []);
+  }, [filters]);
 
   const fetchAdminData = useCallback(async () => {
     try {
@@ -343,6 +358,14 @@ export default function App() {
         {/* Kanban */}
         {activeTab === 'kanban' && (
           <>
+            <FilterBar
+              stages={stages}
+              managers={managers}
+              filters={filters}
+              savedFilters={savedFilters}
+              onApply={handleApplyFilters}
+              onSavedFiltersChange={setSavedFilters}
+            />
             <div style={{ flex: 1, padding: '14px 16px', overflowX: 'auto', overflowY: 'hidden', ...dotGrid }}>
               <KanbanBoard
                 stages={stages}

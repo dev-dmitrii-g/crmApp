@@ -157,3 +157,69 @@ export interface SLASetting {
     warn_hours: number;
     crit_hours: number;
 }
+
+export interface ClientFilters {
+    manager_id: string;
+    stage: string;
+    search: string;
+    date_from: string;
+    date_to: string;
+    has_tasks: string;
+    min_amount: string;
+    max_amount: string;
+}
+
+export const emptyFilters = (): ClientFilters => ({
+    manager_id: '', stage: '', search: '', date_from: '',
+    date_to: '', has_tasks: '', min_amount: '', max_amount: '',
+});
+
+export interface SavedFilter {
+    id: number;
+    name: string;
+    params: ClientFilters;
+    created_at: string;
+}
+
+export interface FunnelStage {
+    name: string;
+    code: string;
+    color: string;
+    count: number;
+    amount: number;
+    pct_of_total: number;
+    avg_hours: number;
+    is_success: boolean;
+    is_fail: boolean;
+}
+
+export interface FunnelResponse {
+    stages: FunnelStage[];
+    loss_reasons: { reason: string; count: number }[];
+    total_clients: number;
+    won_clients: number;
+    lost_clients: number;
+}
+
+export interface ManagerStat {
+    id: number;
+    name: string;
+    total_deals: number;
+    won_deals: number;
+    lost_deals: number;
+    active_deals: number;
+    messages_sent: number;
+    overdue_tasks: number;
+    win_rate: number;
+}
+
+export interface FinancialResponse {
+    pipeline_value: number;
+    won_value: number;
+    avg_deal: number;
+    total_deals: number;
+    won_deals: number;
+    lost_deals: number;
+    conversion_rate: number;
+    amount_field: string;
+}
