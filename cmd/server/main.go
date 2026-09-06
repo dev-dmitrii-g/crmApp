@@ -66,6 +66,8 @@ func main() {
 		// Clients
 		api.GET("/clients", crm.GetClients)
 		api.POST("/clients", crm.CreateClient)
+		api.PATCH("/clients/:id", crm.UpdateClientBasic)
+		api.DELETE("/clients/:id", crm.DeleteClient)
 		api.PATCH("/clients/:id/status", crm.UpdateClientStatus)
 		api.PATCH("/clients/:id/fields", crm.UpdateClientFields)
 		api.POST("/clients/:id/upload", crm.UploadClientFile)
@@ -87,6 +89,9 @@ func main() {
 		api.POST("/companies", contacts.CreateCompany)
 		api.PATCH("/companies/:id", contacts.UpdateCompany)
 		api.DELETE("/companies/:id", contacts.DeleteCompany)
+
+		// WhatsApp status (all authenticated users)
+		api.GET("/whatsapp/status", whatsapp.GetStatus)
 
 		// Messages
 		api.GET("/messages", chat.GetMessages)

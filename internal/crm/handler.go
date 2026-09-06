@@ -275,6 +275,62 @@ func UploadClientFile(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"url": url})
 }
 
+func DeleteClient(c *gin.Context) {
+	id := c.Param("id")
+	_, err := db.DB.Exec("DELETE FROM clients WHERE id = ?", id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete client"})
+		return
+	}
+	userIDRaw, _ := c.Get("user_id")
+	db.LogAction(userIDRaw.(uint), "DELETE_CLIENT", "Удаление клиента id="+id)
+	c.JSON(http.StatusOK, gin.H{"message": "Client deleted"})
+}
+
+type UpdateClientBasicInput struct {
+	Name  string `json:"name"`
+	Phone string `json:"phone"`
+}
+
+func UpdateClientBasic(c *gin.Context) {
+	id := c.Param("id")
+	var input UpdateClientBasicInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if input.Name == "" && input.Phone == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name or phone required"})
+		return
+	}
+
+	if input.Name != "" && input.Phone != "" {
+		phone := normalizePhone(input.Phone)
+		_, err := db.DB.Exec("UPDATE clients SET name = ?, phone = ? WHERE id = ?", input.Name, phone, id)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update client"})
+			return
+		}
+	} else if input.Name != "" {
+		_, err := db.DB.Exec("UPDATE clients SET name = ? WHERE id = ?", input.Name, id)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update client"})
+			return
+		}
+	} else {
+		phone := normalizePhone(input.Phone)
+		_, err := db.DB.Exec("UPDATE clients SET phone = ? WHERE id = ?", phone, id)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update client"})
+			return
+		}
+	}
+
+	userIDRaw, _ := c.Get("user_id")
+	db.LogAction(userIDRaw.(uint), "UPDATE_CLIENT", fmt.Sprintf("Редактирование клиента id=%s name=%q phone=%q", id, input.Name, input.Phone))
+	c.JSON(http.StatusOK, gin.H{"message": "Client updated"})
+}
+
 func GetLossReasons(c *gin.Context) {
 	rows, err := db.DB.Query("SELECT id, name FROM loss_reasons ORDER BY id ASC")
 	if err != nil {
