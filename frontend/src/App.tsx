@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import api from './services/api';
 import type { Client, Stage, Manager, Analytics, Message, TransitionRule, StageRequiredField, LossReason, FieldDefinition, FieldStageVisibility, SLASetting, ClientFilters, SavedFilter } from './types';
 import { emptyFilters } from './types';
@@ -120,10 +120,7 @@ export default function App() {
     }
   }, [token, activeTab]);
 
-  const handleApplyFilters = (f: ClientFilters) => {
-    setFilters(f);
-    void fetchClients(f);
-  };
+  const handleApplyFilters = (f: ClientFilters) => { setFilters(f); };
 
   const fetchStages = useCallback(async () => {
     try {
@@ -149,16 +146,41 @@ export default function App() {
     } catch { /* SLA unavailable — badges simply won't show */ }
   }, []);
 
-  const fetchClients = useCallback(async (f?: ClientFilters) => {
+  const fetchClients = useCallback(async () => {
     try {
-      const params = new URLSearchParams();
-      const active = f ?? filters;
-      Object.entries(active).forEach(([k, v]) => { if (v) params.set(k, v); });
-      const r = await api.get<Client[]>(`/clients${params.size ? '?' + params.toString() : ''}`);
+      const r = await api.get<Client[]>('/clients');
       setClients(r.data || []);
     } catch (err) { console.error(err); }
     finally { setLoadingKanban(false); }
-  }, [filters]);
+  }, []);
+
+  const filteredClients = useMemo(() => {
+    let result = clients;
+    if (filters.search) {
+      const s = filters.search.toLowerCase();
+      const digits = s.replace(/\D/g, '');
+      result = result.filter(c =>
+        c.name.toLowerCase().includes(s) ||
+        c.phone.includes(s) ||
+        (digits && c.phone.includes(digits))
+      );
+    }
+    if (filters.stage) result = result.filter(c => c.status === filters.stage);
+    if (filters.manager_id) result = result.filter(c => String(c.manager_id) === filters.manager_id);
+    if (filters.date_from) result = result.filter(c => (c.created_at ?? '') >= filters.date_from);
+    if (filters.date_to) result = result.filter(c => (c.created_at ?? '') <= filters.date_to + ' 23:59:59');
+    if (filters.has_tasks === '1') result = result.filter(c => (c.open_tasks_count ?? 0) > 0);
+    if (filters.has_tasks === '0') result = result.filter(c => (c.open_tasks_count ?? 0) === 0);
+    if (filters.min_amount || filters.max_amount) {
+      result = result.filter(c => {
+        const amount = Object.values(c.custom_fields ?? {}).map(Number).find(n => !isNaN(n) && n > 0) ?? 0;
+        if (filters.min_amount && amount < parseFloat(filters.min_amount)) return false;
+        if (filters.max_amount && amount > parseFloat(filters.max_amount)) return false;
+        return true;
+      });
+    }
+    return result;
+  }, [clients, filters]);
 
   const fetchAdminData = useCallback(async () => {
     try {
@@ -369,7 +391,7 @@ export default function App() {
             <div style={{ flex: 1, padding: '14px 16px', overflowX: 'auto', overflowY: 'hidden', ...dotGrid }}>
               <KanbanBoard
                 stages={stages}
-                clients={clients}
+                clients={filteredClients}
                 transitionRules={transitionRules}
                 stageRequiredFields={stageRequiredFields}
                 lossReasons={lossReasons}

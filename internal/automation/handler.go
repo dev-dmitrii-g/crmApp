@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode"
 
+	"crmProject/internal/chat"
 	"crmProject/internal/db"
 	"crmProject/internal/whatsapp"
 
@@ -357,9 +358,17 @@ func sendWA(ctx context.Context, ruleID int, data map[string]interface{}, client
 		log.Printf("[AUTO] WA send error rule %d: %v", ruleID, err)
 		return
 	}
-	_, _ = db.DB.Exec(
+	res, _ := db.DB.Exec(
 		"INSERT INTO messages (client_id, sender_phone, text, is_outgoing) VALUES (?,?,?,1)",
 		clientID, "auto", msg)
+	msgID, _ := res.LastInsertId()
+	chat.BroadcastMessage(map[string]interface{}{
+		"type":        "new_message",
+		"id":          msgID,
+		"client_id":   clientID,
+		"text":        msg,
+		"is_outgoing": true,
+	})
 	log.Printf("[AUTO] WA sent rule=%d client=%d", ruleID, clientID)
 }
 

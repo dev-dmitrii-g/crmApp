@@ -80,8 +80,15 @@ func GetClients(c *gin.Context) {
 		args = append(args, v)
 	}
 	if v := c.Query("search"); v != "" {
-		conds = append(conds, "(c.name LIKE ? OR c.phone LIKE ?)")
-		args = append(args, "%"+v+"%", "%"+v+"%")
+		normalized := normalizePhone(v)
+		if normalized != "" && normalized != v {
+			// e.g. "+7 900 123" → also match against "7900123" stored in DB
+			conds = append(conds, "(c.name LIKE ? OR c.phone LIKE ? OR c.phone LIKE ?)")
+			args = append(args, "%"+v+"%", "%"+v+"%", "%"+normalized+"%")
+		} else {
+			conds = append(conds, "(c.name LIKE ? OR c.phone LIKE ?)")
+			args = append(args, "%"+v+"%", "%"+v+"%")
+		}
 	}
 	if v := c.Query("date_from"); v != "" {
 		conds = append(conds, "c.created_at >= ?")

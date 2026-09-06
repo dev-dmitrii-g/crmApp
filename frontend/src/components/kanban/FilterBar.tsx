@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Filter, X, Bookmark, BookmarkCheck, ChevronDown, ChevronUp } from 'lucide-react';
 import api from '../../services/api';
 import { useToast } from '../../hooks/useToast';
@@ -15,8 +15,9 @@ interface Props {
     onSavedFiltersChange: (sf: SavedFilter[]) => void;
 }
 
-const isActive = (f: ClientFilters) =>
-    Object.values(f).some(v => v !== '');
+const hasActive = (f: ClientFilters) => Object.values(f).some(v => v !== '');
+
+const TEXT_FIELDS: (keyof ClientFilters)[] = ['search', 'min_amount', 'max_amount'];
 
 export const FilterBar: React.FC<Props> = ({
     stages, managers, filters, savedFilters, onApply, onSavedFiltersChange,
@@ -26,12 +27,26 @@ export const FilterBar: React.FC<Props> = ({
     const [local, setLocal] = useState<ClientFilters>(filters);
     const [saveName, setSaveName] = useState('');
     const [saving, setSaving] = useState(false);
+    const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    const set = (k: keyof ClientFilters, v: string) =>
-        setLocal(prev => ({ ...prev, [k]: v }));
+    const set = (k: keyof ClientFilters, v: string) => {
+        const updated = { ...local, [k]: v };
+        setLocal(updated);
+        if (TEXT_FIELDS.includes(k)) {
+            // debounce text inputs 250 ms
+            if (debounceTimer.current) clearTimeout(debounceTimer.current);
+            debounceTimer.current = setTimeout(() => onApply(updated), 250);
+        } else {
+            onApply(updated);
+        }
+    };
 
-    const apply = () => { onApply(local); setOpen(false); };
-    const reset = () => { setLocal(emptyFilters()); onApply(emptyFilters()); };
+    const reset = () => {
+        if (debounceTimer.current) clearTimeout(debounceTimer.current);
+        const empty = emptyFilters();
+        setLocal(empty);
+        onApply(empty);
+    };
 
     const handleSave = async () => {
         if (!saveName.trim()) return;
@@ -50,7 +65,9 @@ export const FilterBar: React.FC<Props> = ({
         onSavedFiltersChange(savedFilters.filter(f => f.id !== id));
     };
 
-    const activeCount = Object.values(local).filter(v => v !== '').length;
+    const applyChip = (params: ClientFilters) => { setLocal(params); onApply(params); };
+
+    const activeCount = Object.values(filters).filter(v => v !== '').length;
 
     return (
         <div style={{ borderBottom: `1px solid ${c.border}`, background: c.bgCard, flexShrink: 0 }}>
@@ -60,10 +77,10 @@ export const FilterBar: React.FC<Props> = ({
                     onClick={() => setOpen(o => !o)}
                     style={{
                         display: 'flex', alignItems: 'center', gap: 6,
-                        background: isActive(filters) ? 'rgba(59,130,246,0.12)' : 'rgba(255,255,255,0.05)',
-                        border: `1px solid ${isActive(filters) ? 'rgba(59,130,246,0.4)' : c.border}`,
+                        background: hasActive(filters) ? 'rgba(59,130,246,0.12)' : 'rgba(255,255,255,0.05)',
+                        border: `1px solid ${hasActive(filters) ? 'rgba(59,130,246,0.4)' : c.border}`,
                         borderRadius: 8, padding: '5px 12px', cursor: 'pointer',
-                        color: isActive(filters) ? c.blue : c.text2, fontSize: 12, fontWeight: 600,
+                        color: hasActive(filters) ? c.blue : c.text2, fontSize: 12, fontWeight: 600,
                     }}
                 >
                     <Filter size={13} strokeWidth={2} />
@@ -81,7 +98,7 @@ export const FilterBar: React.FC<Props> = ({
                     {savedFilters.map(sf => (
                         <div key={sf.id} style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
                             <button
-                                onClick={() => { setLocal(sf.params); onApply(sf.params); }}
+                                onClick={() => applyChip(sf.params)}
                                 style={{
                                     padding: '3px 10px', border: `1px solid ${c.border}`, borderRadius: '6px 0 0 6px',
                                     background: 'rgba(255,255,255,0.04)', color: c.text2,
@@ -103,8 +120,8 @@ export const FilterBar: React.FC<Props> = ({
                     ))}
                 </div>
 
-                {isActive(filters) && (
-                    <button onClick={reset} style={{ ...btn('transparent', { border: 'none', color: c.text3, fontSize: 11, padding: '4px 8px', cursor: 'pointer' }) }}>
+                {hasActive(filters) && (
+                    <button onClick={reset} style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'none', border: 'none', color: c.text3, fontSize: 11, cursor: 'pointer', padding: '4px 8px' }}>
                         <X size={12} /> Сбросить
                     </button>
                 )}
@@ -116,7 +133,8 @@ export const FilterBar: React.FC<Props> = ({
                     <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
                         <FilterField label="Поиск">
                             <input
-                                placeholder="Имя или телефон..."
+                                autoFocus
+                                placeholder="Имя или +7 номер..."
                                 value={local.search}
                                 onChange={e => set('search', e.target.value)}
                                 style={{ ...inp(), width: 180, fontSize: 12 }}
@@ -179,9 +197,6 @@ export const FilterBar: React.FC<Props> = ({
                             />
                         </FilterField>
 
-                        <button onClick={apply} style={btn(c.blue, { padding: '7px 16px', fontSize: 12, fontWeight: 700, borderRadius: 8 })}>
-                            Применить
-                        </button>
                         <button onClick={reset} style={btn('rgba(255,255,255,0.06)', { padding: '7px 12px', fontSize: 12, borderRadius: 8, border: `1px solid ${c.border}`, color: c.text2 })}>
                             Сбросить
                         </button>
