@@ -1,0 +1,27 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data        # persistent DB files
+      - ./uploads:/app/uploads  # uploaded client files
+    environment:
+      DB_PATH: /app/data/crm.db
+      WA_DB_PATH: /app/data/wa.db
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Change this if the backend is on a different host/port
+        VITE_API_URL: http://localhost:8080/api
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    restart: unless-stopped

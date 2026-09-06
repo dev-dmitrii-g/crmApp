@@ -13,6 +13,7 @@ import (
 	"crmProject/internal/whatsapp"
 	"log"
 	"net/http"
+	"os"
 
 	"crmProject/internal/auth"
 	"crmProject/internal/db"
@@ -21,13 +22,22 @@ import (
 )
 
 func main() {
-	database, err := db.InitDB("./crm.db")
+	dbPath := os.Getenv("DB_PATH")
+	if dbPath == "" {
+		dbPath = "./crm.db"
+	}
+	waDBPath := os.Getenv("WA_DB_PATH")
+	if waDBPath == "" {
+		waDBPath = "./wa.db"
+	}
+
+	database, err := db.InitDB(dbPath)
 	if err != nil {
 		log.Fatalf("Database initialization error: %v", err)
 	}
 	defer database.Close()
 
-	waMgr, err := whatsapp.InitWAManager(context.Background(), "./wa.db")
+	waMgr, err := whatsapp.InitWAManager(context.Background(), waDBPath)
 	if err != nil {
 		log.Fatalf("WhatsApp Manager init error: %v", err)
 	}

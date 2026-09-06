@@ -301,7 +301,7 @@ export default function App() {
               <MessageCircle size={24} color="#fff" strokeWidth={2} />
             </div>
             <h2 style={{ margin: 0, fontSize: 20, color: c.text1, fontWeight: 700 }}>Вход в CRM</h2>
-            <p style={{ margin: '6px 0 0', fontSize: 13, color: c.text2 }}>WhatsApp CRM Platform</p>
+            <p style={{ margin: '6px 0 0', fontSize: 13, color: c.text2 }}>нифиговый crm</p>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="Email" style={inp()} />
@@ -335,7 +335,7 @@ export default function App() {
             <div style={{ width: 28, height: 28, borderRadius: 8, background: 'linear-gradient(135deg,#25D366,#128C7E)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <MessageCircle size={15} color="#fff" strokeWidth={2} />
             </div>
-            <span style={{ fontWeight: 700, fontSize: 14, color: c.text1, whiteSpace: 'nowrap' }}>WhatsApp CRM</span>
+            <span style={{ fontWeight: 700, fontSize: 14, color: c.text1, whiteSpace: 'nowrap' }}>Нифиговый CRM</span>
           </div>
           <nav style={{ display: 'flex', gap: 2 }}>
             {navTabs.map(t => (

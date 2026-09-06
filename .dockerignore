@@ -1,0 +1,25 @@
+# Git
+.git/
+.gitignore
+
+# Build artifacts
+cmd/server/server
+server
+
+# DB files (mounted as volume in Docker)
+*.db
+*.db-shm
+*.db-wal
+data/
+
+# Uploads (mounted as volume)
+uploads/
+
+# Frontend (built inside its own Docker image)
+frontend/node_modules/
+frontend/dist/
+
+# Logs and local env
+*.log
+.env
+.env.local
